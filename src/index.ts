@@ -3,12 +3,12 @@ import crypto from 'crypto'
 import { exit } from 'process'
 import { Redis } from 'ioredis'
 import PQueue from 'p-queue'
-
 import config from '../config.json' with { type: 'json' }
 
 const conn = new Redis(config.connstring, {
     maxRetriesPerRequest: null,
-    tls: { servername: config.servername }
+    tls: { servername: config.servername },
+    keepAlive: 10000
 })
 
 try {
@@ -128,6 +128,38 @@ const server = net.createServer((socket) => {
                             })
                         }, 100)
 
+                        const server_reply = Buffer.alloc(10)
+                        server_reply[0] = 0x05 // VER
+                        server_reply[1] = 0x00 // REP
+                        server_reply[2] = 0x00 // RSV
+                        server_reply[3] = 0x01
+                        // dummy bound address, its tough to receive this
+                        server_reply[4] = 0
+                        server_reply[5] = 0
+                        server_reply[6] = 0
+                        server_reply[7] = 0
+                        // dummy port
+                        server_reply[8] = 0
+                        server_reply[9] = 0
+                        socket.write(server_reply)
+                        logger(`CONNECT done for ${connectionID} with ${DSTADDR} destination`, "info")
+                        const blconn = new Redis(config.connstring, {
+                            maxRetriesPerRequest: null,
+                            tls: { servername: config.servername },
+                            keepAlive: 10000
+                        })
+                        const pinger = setInterval(async () => {
+                            try {
+                                await blconn.ping()
+                            } catch (e) {
+                                logger("pinger: " + e, "info")
+                                clearInterval(pinger)
+                                clearInterval(interv)
+                                socket.end()
+                                connlist.delete(connectionID)
+                            }
+                        }, 3000)
+
                         socket.once('error', (e) => {
                             logger(`Client error: ${e}`, "error")
                             clearInterval(pinger)
@@ -150,25 +182,6 @@ const server = net.createServer((socket) => {
                             connlist.delete(connectionID)
                         })
 
-                        const server_reply = Buffer.alloc(10)
-                        server_reply[0] = 0x05 // VER
-                        server_reply[1] = 0x00 // REP
-                        server_reply[2] = 0x00 // RSV
-                        server_reply[3] = 0x01
-                        // dummy bound address, its tough to receive this
-                        server_reply[4] = 0
-                        server_reply[5] = 0
-                        server_reply[6] = 0
-                        server_reply[7] = 0
-                        // dummy port
-                        server_reply[8] = 0
-                        server_reply[9] = 0
-                        socket.write(server_reply)
-                        logger(`CONNECT done for ${connectionID} with ${DSTADDR} destination`, "info")
-                        const blconn = new Redis(config.connstring, {
-                            maxRetriesPerRequest: null,
-                            tls: { servername: config.servername }
-                        })
 
                         blconn.on('error', () => {
                             logger("blconn error event: " + connectionID, "error")
@@ -176,27 +189,17 @@ const server = net.createServer((socket) => {
                             clearInterval(pinger)
                             socket.end()
                             connlist.delete(connectionID)
+                            blconn.disconnect(false)
                         })
 
                         try {
-                            await blconn.ping()
+                            blconn.ping()
                         } catch (e) {
-                            logger("blconn ping error: " + e, "error")
+                            logger("blconn ping error!: " + e, "error")
                             clearInterval(interv)
                             socket.end()
                             connlist.delete(connectionID)
                         }
-                        const pinger = setInterval(async () => {
-                            try {
-                                await blconn.ping()
-                            } catch (e) {
-                                logger("pinger: " + e, "info")
-                                clearInterval(pinger)
-                                clearInterval(interv)
-                                socket.end()
-                                connlist.delete(connectionID)
-                            }
-                        }, 10000)
                         while (true) {
                             try {
                                 const response = await blconn.brpopBuffer(`appserver,${connectionID}`, 0)
@@ -244,10 +247,9 @@ const server = net.createServer((socket) => {
     })
 })
 
-
 setInterval(async () => {
     try {
-        await conn.ping()
+        conn.ping()
     } catch (e) {
         logger("gPinger: " + e, "info")
     }
@@ -260,11 +262,7 @@ process.on('uncaughtException', (error) => {
 process.on('SIGTERM', async () => {
     logger("Stopping the server", "info")
     server.close()
-    await conn.del("inform")
-    for (const element of connlist.keys()) {
-        await conn.del(`proxy,${element}`)
-        await conn.del(`appserver,${element}`)
-    }
+    await conn.flushdb()
     logger("Removing chunks completed", "info")
     exit(0)
 })
@@ -272,11 +270,7 @@ process.on('SIGTERM', async () => {
 process.on('SIGINT', async () => {
     logger("Stopping the server", "info")
     server.close()
-    await conn.del("inform")
-    for (const element of connlist.keys()) {
-        await conn.del(`proxy,${element}`)
-        await conn.del(`appserver,${element}`)
-    }
+    await conn.flushdb()
     logger("Removing chunks completed", "info")
     exit(0)
 })

@@ -8,29 +8,24 @@ import config from '../config.json' with { type: 'json' }
 
 const conn = new Redis(config.connstring, {
     maxRetriesPerRequest: null,
-    tls: { servername: config.servername }
+    tls: { servername: config.servername },
+    keepAlive: 10000
 })
+
 try {
     await conn.ping()
 } catch (e) {
-    logger("conn ping error: " + e, "error")
 }
 
 const blconn = new Redis(config.connstring, {
     maxRetriesPerRequest: null,
-    tls: { servername: config.servername }
+    tls: { servername: config.servername },
+    keepAlive: 10000
 })
 
 try {
     await blconn.ping()
 } catch (e) {
-    logger("blconn ping error: " + e, "error")
-}
-
-function logger(param: string, type?: string) {
-    const date = new Date(Date.now())
-    console.log(type == "info" ? `[\x1b[33mINFO\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}`
-        : (type == "error" ? `[\x1b[31mERR\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}` : param))
 }
 
 //DNS RESOLVE, for now its not optimized but works atleast
@@ -80,7 +75,6 @@ async function getFastestIP(address: string, port: number): Promise<string | nul
 const sockets = new Map<string, Socket>()
 setImmediate(async () => {
     while (true) {
-        logger("Waiting for inform", "info")
         const payload = await blconn.brpopBuffer(`inform`, 0)
         const extractIv = payload![1].subarray(0, 12)
         const tag = payload![1].subarray(12, 28)
@@ -93,26 +87,18 @@ setImmediate(async () => {
         const dstaddr = things[0]!
         const dstport = parseInt(things[1]!)
         const connectionID = things[2]!
-	const atyp = things[3]!
-        logger(`Waiting for proxy,${connectionID}`, "info")
+        const atyp = things[3]!
         setImmediate(async () => {
             try {
                 const blconn1 = new Redis(config.connstring, {
                     maxRetriesPerRequest: null,
-                    tls: { servername: config.servername }
-                })
-
-                blconn1.on('error', () => {
-                    logger("blconn error event: " + connectionID, "error")
-                    clearInterval(pinger)
-                    sockets.get(connectionID)?.end()
-                    sockets.delete(connectionID)
+                    tls: { servername: config.servername },
+                    keepAlive: 10000
                 })
 
                 try {
                     await blconn1.ping()
                 } catch (e) {
-                    logger("blconn1 ping error: " + e, "error")
                     return
                 }
 
@@ -120,7 +106,6 @@ setImmediate(async () => {
                     try {
                         await blconn1.ping()
                     } catch (e) {
-                        logger("pinger: " + e, "info")
                         clearInterval(pinger)
                         sockets.delete(connectionID)
                     }
@@ -129,7 +114,6 @@ setImmediate(async () => {
                 while (true) {
                     const request = (await blconn1.brpopBuffer(`proxy,${connectionID}`, 0))?.[1]
                     if (!request) {
-                        logger("proxy chunk is null for " + connectionID, "error")
                         clearInterval(pinger)
                         blconn1.quit()
                         sockets.delete(connectionID)
@@ -143,7 +127,6 @@ setImmediate(async () => {
                     const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
 
                     if (!Buffer.from('end', 'binary').compare(decryptedChunk)) {
-                        logger("breaking the " + connectionID, "info")
                         sockets.delete(connectionID)
                         clearInterval(pinger)
                         blconn1.quit()
@@ -151,12 +134,11 @@ setImmediate(async () => {
                     }
                     if (!sockets.has(connectionID)) {
                         let fastestWorkingIP: string | null
-			if atyp == "3"
-			    fastestWorkingIP = await getFastestIP(dstaddr, dstport)
-			else
-			    fastestWorkingIP = dstaddr
+                        if (atyp === "3")
+                            fastestWorkingIP = await getFastestIP(dstaddr, dstport)
+                        else
+                            fastestWorkingIP = dstaddr
                         if (!fastestWorkingIP) {
-                            logger(`There is no working DNS for ${dstaddr} with ${connectionID} ID`, "error")
                             const msg = Buffer.from('end', 'binary')
                             const iv = crypto.randomBytes(12)
                             const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
@@ -172,19 +154,16 @@ setImmediate(async () => {
                         sockets.set(connectionID, appServer)
                         const res = await new Promise<Boolean>((resolve) => {
                             const connectionTimeout = setTimeout(() => {
-                                logger("Timeout for " + connectionID, "error")
                                 if (appServer)
                                     appServer.destroy()
                                 resolve(false)
                             }, 25000)
                             appServer.once('connect', async () => {
                                 clearTimeout(connectionTimeout)
-                                logger(connectionID + " connected", "info")
                                 resolve(true)
                             })
                             appServer.once('error', () => {
                                 clearTimeout(connectionTimeout)
-                                logger(`Can't reach ${dstaddr}:${dstport}`, "error")
                                 if (appServer)
                                     appServer.destroy()
                                 resolve(false)
@@ -210,7 +189,6 @@ setImmediate(async () => {
                                 buffass.push(data)
                                 pqueue.add(async () => {
                                     if (length > 1024 * 1024 * 2) { // bigger than 2mb
-                                        logger(`Pushing BIG batch to appserver,${connectionID}`, "info")
                                         const msg = Buffer.concat(buffass)
                                         const iv = crypto.randomBytes(12)
                                         const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
@@ -225,7 +203,6 @@ setImmediate(async () => {
                                     if (!length)
                                         return
                                     pqueue.add(async () => {
-                                        logger(`Pushing batch to appserver,${connectionID}`, "info")
                                         const msg = Buffer.concat(buffass)
                                         const iv = crypto.randomBytes(12)
                                         const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
@@ -240,7 +217,6 @@ setImmediate(async () => {
                         })
                         // notify the proxy appserver dont sends data anymore (half close)
                         appServer.on('end', async () => {
-                            logger(`Sending half close signal to appserver,${connectionID}`, "info")
                             const msg = Buffer.from('end', 'binary')
                             const iv = crypto.randomBytes(12)
                             const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
@@ -265,32 +241,18 @@ setInterval(async () => {
         await conn.ping()
         await blconn.ping()
     } catch (e) {
-        logger("gPinger: " + e, "info")
     }
 }, 10000)
 
 process.on('uncaughtException', (error) => {
-    logger(`Uncaught exception ${error}`, "error")
 })
 
 process.on('SIGTERM', async () => {
-    logger("Stopping the server", "info")
-    await conn.del("inform")
-    for (const element of sockets.keys()) {
-        await conn.del(`proxy,${element}`)
-        await conn.del(`appserver,${element}`)
-    }
-    logger("Removing chunks completed", "info")
+    await conn.flushdb()
     exit(0)
 })
 
 process.on('SIGINT', async () => {
-    logger("Stopping the server", "info")
-    await conn.del("inform")
-    for (const element of sockets.keys()) {
-        await conn.del(`proxy,${element}`)
-        await conn.del(`appserver,${element}`)
-    }
-    logger("Removing chunks completed", "info")
+    await conn.flushdb()
     exit(0)
 })
