@@ -16,6 +16,3 @@ npm run dev
 Same operation applies for the proxy :)
 
 oh btw the port is 1080
-
-# TODO
-- change bandwidth with rtt
