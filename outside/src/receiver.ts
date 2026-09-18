@@ -25,12 +25,6 @@ try {
 } catch (e) {
 }
 
-function logger(param: string, type?: string) {
-    const date = new Date(Date.now())
-    console.log(type == "info" ? `[\x1b[33mINFO\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}`
-        : (type == "error" ? `[\x1b[31mERR\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}` : param))
-}
-
 
 //DNS RESOLVE, for now its not optimized but works atleast
 const workingDNSes = new Map<string, { ip: string, requiredTime: number }>() // Map<address, ip>
@@ -74,6 +68,12 @@ async function getFastestIP(address: string, port: number): Promise<string | nul
     } catch (err) {
         return null
     }
+}
+
+function logger(param: string, type?: string) {
+    const date = new Date(Date.now())
+    console.log(type == "info" ? `[\x1b[33mINFO\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}`
+        : (type == "error" ? `[\x1b[31mERR\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}` : param))
 }
 
 const sockets = new Map<string, Socket>()
@@ -120,8 +120,8 @@ setImmediate(async () => {
                         if (!buffered) {
                             clearInterval(pinger)
                             clearImmediate(imed)
-                            blconn1.quit()
-                            ackconn.quit()
+                            blconn1.quit().catch(() => { })
+                            ackconn.quit().catch(() => { })
                             sockets.delete(connectionID)
                             break
                         }
@@ -132,6 +132,7 @@ setImmediate(async () => {
                         decipher.setAuthTag(tag)
                         const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
                         const ack = decryptedChunk.toString('utf8')
+                        // YEA I KNOW ITS NOT FUCKING RTT
                         const rtt = parseInt(ack)
                         if (rtt)
                             if (rtt > 10000)
@@ -151,8 +152,8 @@ setImmediate(async () => {
                     } catch (e) {
                         clearInterval(pinger)
                         clearImmediate(imed)
-                        blconn1.quit()
-                        ackconn.quit()
+                        blconn1.quit().catch(() => { })
+                        ackconn.quit().catch(() => { })
                         sockets.delete(connectionID)
                     }
                 }, 10000)
@@ -162,8 +163,8 @@ setImmediate(async () => {
                     if (!request) {
                         clearInterval(pinger)
                         clearImmediate(imed)
-                        blconn1.quit()
-                        ackconn.quit()
+                        blconn1.quit().catch(() => { })
+                        ackconn.quit().catch(() => { })
                         sockets.delete(connectionID)
                         break
                     }
@@ -178,8 +179,8 @@ setImmediate(async () => {
                         sockets.delete(connectionID)
                         clearInterval(pinger)
                         clearImmediate(imed)
-                        blconn1.quit()
-                        ackconn.quit()
+                        blconn1.quit().catch(() => { })
+                        ackconn.quit().catch(() => { })
                         break
                     }
                     if (!sockets.has(connectionID)) {
@@ -197,8 +198,8 @@ setImmediate(async () => {
                             await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                             clearInterval(pinger)
                             clearImmediate(imed)
-                            blconn1.quit()
-                            ackconn.quit()
+                            blconn1.quit().catch(() => { })
+                            ackconn.quit().catch(() => { })
                             sockets.delete(connectionID)
                             break
                         }
@@ -225,8 +226,8 @@ setImmediate(async () => {
                             clearInterval(pinger)
                             clearImmediate(imed)
                             sockets.delete(connectionID)
-                            blconn1.quit()
-                            ackconn.quit()
+                            blconn1.quit().catch(() => { })
+                            ackconn.quit().catch(() => { })
                             break
                         }
 
@@ -242,9 +243,7 @@ setImmediate(async () => {
                                 length += data.length
                                 buffass.push(data)
                                 pqueue.add(async () => {
-                                    logger(`${length} and ${max}`)
                                     if (length > max) { // bigger than 2mb
-                                        logger(`Pushing big pussy ${buffass.length}`)
                                         const msg = Buffer.concat(buffass)
                                         const iv = crypto.randomBytes(12)
                                         const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
@@ -275,8 +274,8 @@ setImmediate(async () => {
                         appServer.on('end', async () => {
                             clearInterval(pinger)
                             clearImmediate(imed)
-                            blconn1.quit()
-                            ackconn.quit()
+                            blconn1.quit().catch(() => { })
+                            ackconn.quit().catch(() => { })
                             sockets.delete(connectionID)
                         })
                     } else
@@ -297,6 +296,7 @@ setInterval(async () => {
 }, 10000)
 
 process.on('uncaughtException', (error) => {
+    logger(`${error.cause}:${error.message}:${error.name}`, "error")
 })
 
 process.on('SIGTERM', async () => {

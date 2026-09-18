@@ -105,7 +105,7 @@ const server = net.createServer((socket) => {
                         const interv = setInterval(async () => {
                             pqueue.add(async () => {
                                 if (length != buff.length)
-                                    length = buff.length
+                                    return
                                 else {
                                     if (buff.length != 0) {
                                         length = 0
@@ -150,16 +150,18 @@ const server = net.createServer((socket) => {
                                 logger("pinger: " + e, "info")
                                 clearInterval(pinger)
                                 clearInterval(interv)
+                                clearImmediate(imedo)
                                 socket.end()
                                 connlist.delete(connectionID)
                             }
-                        }, 3000)
+                        }, 10000)
 
                         socket.once('error', (e) => {
                             logger(`Client error: ${e}`, "error")
                             clearInterval(pinger)
                             clearInterval(interv)
-                            blconn.quit()
+                            clearImmediate(imedo)
+                            blconn.quit().catch(() => { })
                             connlist.delete(connectionID)
                         })
 
@@ -173,8 +175,9 @@ const server = net.createServer((socket) => {
                             conn.del(`ack,${connectionID}`)
                             await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                             clearInterval(pinger)
+                            clearImmediate(imedo)
                             clearInterval(interv)
-                            blconn.quit()
+                            blconn.quit().catch(() => { })
                             connlist.delete(connectionID)
                         })
 
@@ -182,71 +185,68 @@ const server = net.createServer((socket) => {
                             logger("blconn error event: " + connectionID, "error")
                             clearInterval(interv)
                             clearInterval(pinger)
+                            clearImmediate(imedo)
                             socket.end()
                             connlist.delete(connectionID)
                             blconn.disconnect(false)
                         })
 
-                        try {
-                            blconn.ping()
-                        } catch (e) {
-                            logger("blconn ping error!: " + e, "error")
-                            clearInterval(interv)
-                            socket.end()
-                            connlist.delete(connectionID)
-                        }
-                        let rtt = Date.now()
-                        while (true) {
-                            try {
-                                const response = await blconn.brpopBuffer(`appserver,${connectionID}`, 0)
-                                if (!response) {
-                                    logger(`end for ${connectionID} from targetServer`, "info")
-                                    conn.del(`ack,${connectionID}`)
-                                    await conn.del(`appserver,${connectionID}`)
-                                    clearInterval(pinger)
-                                    clearInterval(interv)
-                                    blconn.quit()
-                                    connlist.delete(connectionID)
-                                    socket.end()
-                                    break
-                                }
-                                const meseaured = Date.now() - rtt
-                                rtt = Date.now()
-                                const meseauredMsg = Buffer.from(`${meseaured}`, 'binary')
-                                const meseauredIv = crypto.randomBytes(12)
-                                const meseauredCipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, meseauredIv)
-                                const meseauredEncryptedMsg = Buffer.concat([meseauredCipher.update(meseauredMsg), meseauredCipher.final()])
-                                const meseauredTag = meseauredCipher.getAuthTag()
-                                logger(`RTT LPUSH ${connectionID}:${String(Math.fround(meseaured / (1000))).slice(0, 5)}s for received packet with length of ${Math.fround(response?.[1].length / (1024 * 1024))}mb`, "info")
-                                ack.lpush(`ack,${connectionID}`, Buffer.concat([meseauredIv, meseauredTag, meseauredEncryptedMsg]))
+                        const imedo = setImmediate(async () => {
+                            let rtt = Date.now()
+                            while (true) {
+                                try {
+                                    const response = await blconn.brpopBuffer(`appserver,${connectionID}`, 0)
+                                    if (!response) {
+                                        logger(`end for ${connectionID} from targetServer`, "info")
+                                        conn.del(`ack,${connectionID}`)
+                                        await conn.del(`appserver,${connectionID}`)
+                                        clearInterval(pinger)
+                                        clearInterval(interv)
+                                        clearImmediate(imedo)
+                                        blconn.quit().catch(() => { })
+                                        connlist.delete(connectionID)
+                                        socket.end()
+                                        break
+                                    }
+                                    const meseaured = Date.now() - rtt // I know this is not real rtp
+                                    rtt = Date.now()
+                                    const meseauredMsg = Buffer.from(`${meseaured}`, 'binary')
+                                    const meseauredIv = crypto.randomBytes(12)
+                                    const meseauredCipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, meseauredIv)
+                                    const meseauredEncryptedMsg = Buffer.concat([meseauredCipher.update(meseauredMsg), meseauredCipher.final()])
+                                    const meseauredTag = meseauredCipher.getAuthTag()
+                                    logger(`RTT LPUSH ${connectionID}:${String(Math.fround(meseaured / (1000))).slice(0, 5)}s for received packet with length of ${Math.fround(response?.[1].length / (1024 * 1024))}mb`, "info")
+                                    ack.lpush(`ack,${connectionID}`, Buffer.concat([meseauredIv, meseauredTag, meseauredEncryptedMsg]))
 
-                                const extractIv = response[1].subarray(0, 12)
-                                const tag = response[1].subarray(12, 28)
-                                const encryptedChunk = response[1].subarray(28)
-                                const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
-                                decipher.setAuthTag(tag)
-                                const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
-                                if (!Buffer.from('end', 'binary').compare(decryptedChunk)) {
-                                    logger(`server chunk for ${connectionID} is null`, "info")
+                                    const extractIv = response[1].subarray(0, 12)
+                                    const tag = response[1].subarray(12, 28)
+                                    const encryptedChunk = response[1].subarray(28)
+                                    const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
+                                    decipher.setAuthTag(tag)
+                                    const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
+                                    if (!Buffer.from('end', 'binary').compare(decryptedChunk)) {
+                                        logger(`server chunk for ${connectionID} is null`, "info")
+                                        clearInterval(pinger)
+                                        clearInterval(interv)
+                                        clearImmediate(imedo)
+                                        blconn.quit().catch(() => { })
+                                        connlist.delete(connectionID)
+                                        socket.end()
+                                        conn.del(`ack,${connectionID}`)
+                                        await conn.del(`appserver,${connectionID}`)
+                                        break
+                                    }
+                                    socket?.write(decryptedChunk)
+                                } catch (error) {
                                     clearInterval(pinger)
+                                    clearImmediate(imedo)
                                     clearInterval(interv)
-                                    blconn.quit()
                                     connlist.delete(connectionID)
                                     socket.end()
-                                    conn.del(`ack,${connectionID}`)
-                                    await conn.del(`appserver,${connectionID}`)
                                     break
                                 }
-                                if (!socket.write(decryptedChunk))
-                                    await new Promise(r => socket.once('drain', r))
-                            } catch (error) {
-                                clearInterval(pinger)
-                                clearInterval(interv)
-                                connlist.delete(connectionID)
-                                socket.end()
-                                break
                             }
-                        }
+                        })
                         break
                     default:
                         break
