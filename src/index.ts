@@ -101,7 +101,7 @@ const server = net.createServer((socket) => {
                         })
 
                         let length = 0
-                        let rtt = Date.now()
+                        let rtt = 0
                         let max = 2 * 1024 * 1024
                         const pqueueMax = new PQueue({ concurrency: 1 })
                         const interv = setInterval(async () => {
@@ -120,7 +120,7 @@ const server = net.createServer((socket) => {
                                         const tag = cipher.getAuthTag()
                                         await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                         buff = []
-
+                                        rtt = Date.now()
                                         pqueueMax.add(async () => {
                                             const msgACK = Buffer.from(`${max}`, 'binary')
                                             const ivACK = crypto.randomBytes(12)
@@ -218,9 +218,8 @@ const server = net.createServer((socket) => {
                                         socket.end()
                                         break
                                     }
-                                    const meseaured = Date.now() - rtt
                                     pqueueMax.add(() => {
-                                        rtt = Date.now()
+                                        const meseaured = Date.now() - rtt
                                         if (meseaured > 10000)
                                             max = Math.max((max / 2), 256 * 1024)
                                         else
@@ -228,14 +227,8 @@ const server = net.createServer((socket) => {
                                                 max += (500 * 1024)
                                         if (max > (2 * 1024 * 1024))
                                             max = Math.max((max / 2), 256 * 1024)
+                                        logger(`RTT LPUSH ${connectionID}:${String(Math.fround(meseaured / (1000))).slice(0, 5)}s for received packet with length of ${Math.fround(response?.[1].length / (1024 * 1024))}mb`, "info")
                                     })
-
-                                    const meseauredMsg = Buffer.from(`${meseaured}`, 'binary')
-                                    const meseauredIv = crypto.randomBytes(12)
-                                    const meseauredCipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, meseauredIv)
-                                    const meseauredEncryptedMsg = Buffer.concat([meseauredCipher.update(meseauredMsg), meseauredCipher.final()])
-                                    const meseauredTag = meseauredCipher.getAuthTag()
-                                    logger(`RTT LPUSH ${connectionID}:${String(Math.fround(meseaured / (1000))).slice(0, 5)}s for received packet with length of ${Math.fround(response?.[1].length / (1024 * 1024))}mb`, "info")
 
                                     const extractIv = response[1].subarray(0, 12)
                                     const tag = response[1].subarray(12, 28)
