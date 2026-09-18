@@ -33,7 +33,7 @@ function logger(param: string, type?: string) {
 
 const connlist = new Map<string, any>()
 
-const symmetricKey = Buffer.from("632f32241620a2344d348f45298adaf464cb3401f83a0b589c00d6e7a29e24d3y", "hex")
+const symmetricKey = Buffer.from(config.symmetricKey, "hex")
 
 const server = net.createServer((socket) => {
     socket.on('error', (err) => {

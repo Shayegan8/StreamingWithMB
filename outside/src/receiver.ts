@@ -24,18 +24,11 @@ try {
 } catch (e) {
 }
 
-
-function logger(param: string, type?: string) {
-    const date = new Date(Date.now())
-    console.log(type == "info" ? `[\x1b[33mINFO\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}`
-        : (type == "error" ? `[\x1b[31mERR\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}` : param))
-}
-
 //DNS RESOLVE, for now its not optimized but works atleast
 const workingDNSes = new Map<string, { ip: string, requiredTime: number }>() // Map<address, ip>
 let fastestDNSes = new Map<string, { ip: string, requiredTime: number }>() //Map<address, fastest ip>
 
-const symmetricKey = Buffer.from("632f32241620a2344d348f45298adaf464cb3401f83a0b589c00d6e7a29e24d3y", "hex")
+const symmetricKey = Buffer.from(config.symmetricKey, "hex")
 
 async function testConnection(address: string, ip: string, port: number): Promise<boolean> {
     return await new Promise<boolean>((resolve) => {
@@ -95,7 +88,6 @@ setImmediate(async () => {
             try {
 
                 let max = 1024 * 1024 * 2 // 2MB start
-                let rttReceived = 0
                 const maxQueue = new PQueue({
                     concurrency: 1
                 })
@@ -137,15 +129,13 @@ setImmediate(async () => {
                         const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
                         const ack = decryptedChunk.toString('utf8')
                         const rtt = parseInt(ack)
-                        logger(`RTT received ${String(Math.fround(rtt / (1000))).slice(0, 5)}s:${connectionID}`, "info")
                         if (rtt)
-                            if (!rttReceived)
-                                rttReceived = rtt
-                            else
-                                if (rtt >= rttReceived)
-                                    max -= (200 * 1024)
-                                else
-                                    max += (200 * 1024)
+                            if (rtt > 10000) {
+                                if (max > 0)
+                                    max -= (500 * 1024)
+                            } else
+                                if (max < (1024 * 1024 * 10))
+                                    max += (500 * 1024)
 
                     }
                 })
