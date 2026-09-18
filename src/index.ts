@@ -120,7 +120,16 @@ const server = net.createServer((socket) => {
                                         const tag = cipher.getAuthTag()
                                         await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                         buff = []
-                                        rtt = Date.now()
+                                        sent = true
+                                        pqueueMax.add(async () => {
+                                            const msgACK = Buffer.from(`${max}`, 'binary')
+                                            const ivACK = crypto.randomBytes(12)
+                                            const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
+                                            const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
+                                            const tagACK = cipherACK.getAuthTag()
+                                            await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
+                                            rtt = Date.now()
+                                        })
                                     }
                                 }
                             })
@@ -128,7 +137,6 @@ const server = net.createServer((socket) => {
                         let sent = false
                         const inatervo = setInterval(async () => {
                             if (!sent) {
-                                sent = true
                                 pqueueMax.add(async () => {
                                     const msgACK = Buffer.from(`${max}`, 'binary')
                                     const ivACK = crypto.randomBytes(12)
@@ -136,6 +144,7 @@ const server = net.createServer((socket) => {
                                     const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
                                     const tagACK = cipherACK.getAuthTag()
                                     await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
+                                    rtt = Date.now()
                                 })
                             }
                         }, 100)
@@ -167,6 +176,7 @@ const server = net.createServer((socket) => {
                             } catch (e) {
                                 logger("pinger: " + e, "info")
                                 clearInterval(pinger)
+                                clearInterval(inatervo)
                                 clearInterval(interv)
                                 clearImmediate(imedo)
                                 socket.end()
@@ -178,6 +188,7 @@ const server = net.createServer((socket) => {
                             logger(`Client error: ${e}`, "error")
                             clearInterval(pinger)
                             clearInterval(interv)
+                            clearInterval(inatervo)
                             clearImmediate(imedo)
                             blconn.quit().catch(() => { })
                             connlist.delete(connectionID)
@@ -194,6 +205,7 @@ const server = net.createServer((socket) => {
                             await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                             clearInterval(pinger)
                             clearImmediate(imedo)
+                            clearInterval(inatervo)
                             clearInterval(interv)
                             blconn.quit().catch(() => { })
                             connlist.delete(connectionID)
@@ -203,6 +215,7 @@ const server = net.createServer((socket) => {
                             logger("blconn error event: " + connectionID, "error")
                             clearInterval(interv)
                             clearInterval(pinger)
+                            clearInterval(inatervo)
                             clearImmediate(imedo)
                             socket.end()
                             connlist.delete(connectionID)
@@ -218,6 +231,7 @@ const server = net.createServer((socket) => {
                                         conn.del(`ack,${connectionID}`)
                                         await conn.del(`appserver,${connectionID}`)
                                         clearInterval(pinger)
+                                        clearInterval(inatervo)
                                         clearInterval(interv)
                                         clearImmediate(imedo)
                                         blconn.quit().catch(() => { })
@@ -249,6 +263,7 @@ const server = net.createServer((socket) => {
                                         clearInterval(pinger)
                                         clearInterval(interv)
                                         clearImmediate(imedo)
+                                        clearInterval(inatervo)
                                         blconn.quit().catch(() => { })
                                         connlist.delete(connectionID)
                                         socket.end()
@@ -259,6 +274,7 @@ const server = net.createServer((socket) => {
                                     socket?.write(decryptedChunk)
                                 } catch (error) {
                                     clearInterval(pinger)
+                                    clearInterval(inatervo)
                                     clearImmediate(imedo)
                                     clearInterval(interv)
                                     connlist.delete(connectionID)
