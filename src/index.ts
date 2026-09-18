@@ -105,7 +105,7 @@ const server = net.createServer((socket) => {
                         const interv = setInterval(async () => {
                             pqueue.add(async () => {
                                 if (length != buff.length)
-                                    return
+                                    length = buff.length
                                 else {
                                     if (buff.length != 0) {
                                         length = 0
