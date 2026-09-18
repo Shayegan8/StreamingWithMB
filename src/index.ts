@@ -18,7 +18,6 @@ const ack = new Redis(config.connstring, {
     keepAlive: 10000
 })
 
-
 try {
     await conn.ping()
     await ack.ping()
@@ -102,6 +101,9 @@ const server = net.createServer((socket) => {
                         })
 
                         let length = 0
+                        let rtt = Date.now()
+                        let max = 2 * 1024 * 1024
+                        const pqueueMax = new PQueue({ concurrency: 1 })
                         const interv = setInterval(async () => {
                             pqueue.add(async () => {
                                 if (length != buff.length)
@@ -118,6 +120,15 @@ const server = net.createServer((socket) => {
                                         const tag = cipher.getAuthTag()
                                         await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                         buff = []
+
+                                        pqueueMax.add(async () => {
+                                            const msgACK = Buffer.from(`${max}`, 'binary')
+                                            const ivACK = crypto.randomBytes(12)
+                                            const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
+                                            const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
+                                            const tagACK = cipherACK.getAuthTag()
+                                            await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
+                                        })
                                     }
                                 }
                             })
@@ -192,7 +203,6 @@ const server = net.createServer((socket) => {
                         })
 
                         const imedo = setImmediate(async () => {
-                            let rtt = Date.now()
                             while (true) {
                                 try {
                                     const response = await blconn.brpopBuffer(`appserver,${connectionID}`, 0)
@@ -208,15 +218,24 @@ const server = net.createServer((socket) => {
                                         socket.end()
                                         break
                                     }
-                                    const meseaured = Date.now() - rtt // I know this is not real rtp
-                                    rtt = Date.now()
+                                    const meseaured = Date.now() - rtt
+                                    pqueueMax.add(() => {
+                                        rtt = Date.now()
+                                        if (meseaured > 10000)
+                                            max = Math.max((max / 2), 256 * 1024)
+                                        else
+                                            if (max < (1024 * 1024 * 2))
+                                                max += (500 * 1024)
+                                        if (max > (2 * 1024 * 1024))
+                                            max = Math.max((max / 2), 256 * 1024)
+                                    })
+
                                     const meseauredMsg = Buffer.from(`${meseaured}`, 'binary')
                                     const meseauredIv = crypto.randomBytes(12)
                                     const meseauredCipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, meseauredIv)
                                     const meseauredEncryptedMsg = Buffer.concat([meseauredCipher.update(meseauredMsg), meseauredCipher.final()])
                                     const meseauredTag = meseauredCipher.getAuthTag()
                                     logger(`RTT LPUSH ${connectionID}:${String(Math.fround(meseaured / (1000))).slice(0, 5)}s for received packet with length of ${Math.fround(response?.[1].length / (1024 * 1024))}mb`, "info")
-                                    ack.lpush(`ack,${connectionID}`, Buffer.concat([meseauredIv, meseauredTag, meseauredEncryptedMsg]))
 
                                     const extractIv = response[1].subarray(0, 12)
                                     const tag = response[1].subarray(12, 28)
@@ -258,8 +277,8 @@ const server = net.createServer((socket) => {
 
 setInterval(async () => {
     try {
-        conn.ping()
-        ack.ping()
+        await conn.ping()
+        await ack.ping()
     } catch (e) {
         logger("gPinger: " + e, "info")
     }
