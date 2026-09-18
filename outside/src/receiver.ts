@@ -18,11 +18,19 @@ const blconn = new Redis(config.connstring, {
     tls: { servername: config.servername },
     keepAlive: 10000
 })
+
 try {
     await conn.ping()
     await blconn.ping()
 } catch (e) {
 }
+
+function logger(param: string, type?: string) {
+    const date = new Date(Date.now())
+    console.log(type == "info" ? `[\x1b[33mINFO\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}`
+        : (type == "error" ? `[\x1b[31mERR\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}` : param))
+}
+
 
 //DNS RESOLVE, for now its not optimized but works atleast
 const workingDNSes = new Map<string, { ip: string, requiredTime: number }>() // Map<address, ip>
@@ -78,7 +86,6 @@ setImmediate(async () => {
         const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
         decipher.setAuthTag(tag)
         const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
-
         const things = decryptedChunk.toString('utf8').split(',')!
         const dstaddr = things[0]!
         const dstport = parseInt(things[1]!)
@@ -88,16 +95,12 @@ setImmediate(async () => {
             try {
 
                 let max = 1024 * 1024 * 2 // 2MB start
-                let receivedRTT = 0
-                const maxQueue = new PQueue({
-                    concurrency: 1
-                })
-
                 const blconn1 = new Redis(config.connstring, {
                     maxRetriesPerRequest: null,
                     tls: { servername: config.servername },
                     keepAlive: 10000
                 })
+
                 const ackconn = new Redis(config.connstring, {
                     maxRetriesPerRequest: null,
                     tls: { servername: config.servername },
@@ -130,20 +133,14 @@ setImmediate(async () => {
                         const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
                         const ack = decryptedChunk.toString('utf8')
                         const rtt = parseInt(ack)
-                        if (rtt) {
-                            if (rtt > 10000) {
-                                if (!receivedRTT) {
-                                    receivedRTT = rtt
-                                    if ((max - (500 * 1024)) > 0)
-                                        max -= (500 * 1024)
-                                } else
-                                    if ((max - (max / 2)) > 0)
-                                        max -= (max / 2)
-                            } else
-                                if (max < (1024 * 1024 * 10))
+                        if (rtt)
+                            if (rtt > 10000)
+                                max -= (max / 2)
+                            else
+                                if (max < (1024 * 1024 * 2))
                                     max += (500 * 1024)
-                        }
-
+                        if (max > (2 * 1024 * 1024))
+                            max -= (max / 2)
                     }
                 })
 
@@ -154,6 +151,7 @@ setImmediate(async () => {
                     } catch (e) {
                         clearInterval(pinger)
                         clearImmediate(imed)
+
                         sockets.delete(connectionID)
                     }
                 }, 10000)
@@ -242,19 +240,19 @@ setImmediate(async () => {
                                     clearTimeout(timeout)
                                 length += data.length
                                 buffass.push(data)
-                                pqueue.add(() => {
-                                    maxQueue.add(async () => {
-                                        if (length > max) { // bigger than 2mb
-                                            const msg = Buffer.concat(buffass)
-                                            const iv = crypto.randomBytes(12)
-                                            const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
-                                            const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
-                                            const tag = cipher.getAuthTag()
-                                            await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
-                                            buffass = []
-                                            length = 0
-                                        }
-                                    })
+                                pqueue.add(async () => {
+                                    logger(`${length} and ${max}`)
+                                    if (length > max) { // bigger than 2mb
+                                        logger(`Pushing big pussy ${buffass.length}`)
+                                        const msg = Buffer.concat(buffass)
+                                        const iv = crypto.randomBytes(12)
+                                        const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
+                                        const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
+                                        const tag = cipher.getAuthTag()
+                                        await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                        buffass = []
+                                        length = 0
+                                    }
                                 })
                                 timeout = setTimeout(() => {
                                     if (!length)

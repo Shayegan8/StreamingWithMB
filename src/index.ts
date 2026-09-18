@@ -3,6 +3,7 @@ import crypto from 'crypto'
 import { exit } from 'process'
 import { Redis } from 'ioredis'
 import PQueue from 'p-queue'
+
 import config from '../config.json' with { type: 'json' }
 
 const conn = new Redis(config.connstring, {
@@ -16,7 +17,6 @@ const ack = new Redis(config.connstring, {
     tls: { servername: config.servername },
     keepAlive: 10000
 })
-
 
 try {
     await conn.ping()
@@ -103,20 +103,6 @@ const server = net.createServer((socket) => {
                         let length = 0
                         const interv = setInterval(async () => {
                             pqueue.add(async () => {
-                                if (length > 1024 * 500) {
-                                    logger(`Pushing BIG batch to proxy,${connectionID}`, "info")
-                                    const msg = Buffer.concat(buff)
-                                    const iv = crypto.randomBytes(12)
-                                    const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
-                                    const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
-                                    const tag = cipher.getAuthTag()
-
-                                    await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
-                                    connlist.set(connectionID, true)
-                                    buff = []
-                                    length = 0
-                                    return
-                                }
                                 if (length != buff.length)
                                     length = buff.length
                                 else {
@@ -229,7 +215,7 @@ const server = net.createServer((socket) => {
                                 const meseauredCipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, meseauredIv)
                                 const meseauredEncryptedMsg = Buffer.concat([meseauredCipher.update(meseauredMsg), meseauredCipher.final()])
                                 const meseauredTag = meseauredCipher.getAuthTag()
-                                logger(`RTT LPUSH ${connectionID}:${String(Math.fround(meseaured / (1000))).slice(0, 5)}s`, "info")
+                                logger(`RTT LPUSH ${connectionID}:${String(Math.fround(meseaured / (1000))).slice(0, 5)}s for received packet with length of ${Math.fround(response?.[1].length / (1024 * 1024))}mb`, "info")
                                 ack.lpush(`ack,${connectionID}`, Buffer.concat([meseauredIv, meseauredTag, meseauredEncryptedMsg]))
 
                                 const extractIv = response[1].subarray(0, 12)
