@@ -4,6 +4,7 @@ import { Redis } from 'ioredis'
 import { exit } from 'process'
 import PQueue from 'p-queue'
 import crypto from 'node:crypto'
+
 import config from '../config.json' with { type: 'json' }
 
 const conn = new Redis(config.connstring, {
@@ -12,27 +13,29 @@ const conn = new Redis(config.connstring, {
     keepAlive: 10000
 })
 
-try {
-    await conn.ping()
-} catch (e) {
-}
-
 const blconn = new Redis(config.connstring, {
     maxRetriesPerRequest: null,
     tls: { servername: config.servername },
     keepAlive: 10000
 })
-
 try {
+    await conn.ping()
     await blconn.ping()
 } catch (e) {
+}
+
+
+function logger(param: string, type?: string) {
+    const date = new Date(Date.now())
+    console.log(type == "info" ? `[\x1b[33mINFO\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}`
+        : (type == "error" ? `[\x1b[31mERR\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}` : param))
 }
 
 //DNS RESOLVE, for now its not optimized but works atleast
 const workingDNSes = new Map<string, { ip: string, requiredTime: number }>() // Map<address, ip>
 let fastestDNSes = new Map<string, { ip: string, requiredTime: number }>() //Map<address, fastest ip>
 
-const symmetricKey = Buffer.from(config.symmetricKey, "hex")
+const symmetricKey = Buffer.from("632f32241620a2344d348f45298adaf464cb3401f83a0b589c00d6e7a29e24d3y", "hex")
 
 async function testConnection(address: string, ip: string, port: number): Promise<boolean> {
     return await new Promise<boolean>((resolve) => {
@@ -90,7 +93,19 @@ setImmediate(async () => {
         const atyp = things[3]!
         setImmediate(async () => {
             try {
+
+                let max = 1024 * 1024 * 2 // 2MB start
+                let rttReceived = 0
+                const maxQueue = new PQueue({
+                    concurrency: 1
+                })
+
                 const blconn1 = new Redis(config.connstring, {
+                    maxRetriesPerRequest: null,
+                    tls: { servername: config.servername },
+                    keepAlive: 10000
+                })
+                const ackconn = new Redis(config.connstring, {
                     maxRetriesPerRequest: null,
                     tls: { servername: config.servername },
                     keepAlive: 10000
@@ -98,15 +113,50 @@ setImmediate(async () => {
 
                 try {
                     await blconn1.ping()
+                    await ackconn.ping()
                 } catch (e) {
                     return
                 }
 
+                const imed = setImmediate(async () => {
+                    while (true) {
+                        const buffered = (await ackconn.brpopBuffer(`ack,${connectionID}`, 0))?.[1]
+                        if (!buffered) {
+                            clearInterval(pinger)
+                            clearImmediate(imed)
+                            blconn1.quit()
+                            ackconn.quit()
+                            sockets.delete(connectionID)
+                            break
+                        }
+                        const extractIv = buffered.subarray(0, 12)
+                        const tag = buffered.subarray(12, 28)
+                        const encryptedChunk = buffered.subarray(28)
+                        const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
+                        decipher.setAuthTag(tag)
+                        const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
+                        const ack = decryptedChunk.toString('utf8')
+                        const rtt = parseInt(ack)
+                        logger(`RTT received ${String(Math.fround(rtt / (1000))).slice(0, 5)}s:${connectionID}`, "info")
+                        if (rtt)
+                            if (!rttReceived)
+                                rttReceived = rtt
+                            else
+                                if (rtt >= rttReceived)
+                                    max -= (200 * 1024)
+                                else
+                                    max += (200 * 1024)
+
+                    }
+                })
+
                 const pinger = setInterval(async () => {
                     try {
                         await blconn1.ping()
+                        await ackconn.ping()
                     } catch (e) {
                         clearInterval(pinger)
+                        clearImmediate(imed)
                         sockets.delete(connectionID)
                     }
                 }, 10000)
@@ -115,7 +165,9 @@ setImmediate(async () => {
                     const request = (await blconn1.brpopBuffer(`proxy,${connectionID}`, 0))?.[1]
                     if (!request) {
                         clearInterval(pinger)
+                        clearImmediate(imed)
                         blconn1.quit()
+                        ackconn.quit()
                         sockets.delete(connectionID)
                         break
                     }
@@ -129,7 +181,9 @@ setImmediate(async () => {
                     if (!Buffer.from('end', 'binary').compare(decryptedChunk)) {
                         sockets.delete(connectionID)
                         clearInterval(pinger)
+                        clearImmediate(imed)
                         blconn1.quit()
+                        ackconn.quit()
                         break
                     }
                     if (!sockets.has(connectionID)) {
@@ -146,7 +200,9 @@ setImmediate(async () => {
                             const tag = cipher.getAuthTag()
                             await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                             clearInterval(pinger)
+                            clearImmediate(imed)
                             blconn1.quit()
+                            ackconn.quit()
                             sockets.delete(connectionID)
                             break
                         }
@@ -171,8 +227,10 @@ setImmediate(async () => {
                         })
                         if (!res) {
                             clearInterval(pinger)
+                            clearImmediate(imed)
                             sockets.delete(connectionID)
                             blconn1.quit()
+                            ackconn.quit()
                             break
                         }
 
@@ -187,17 +245,19 @@ setImmediate(async () => {
                                     clearTimeout(timeout)
                                 length += data.length
                                 buffass.push(data)
-                                pqueue.add(async () => {
-                                    if (length > 1024 * 1024 * 2) { // bigger than 2mb
-                                        const msg = Buffer.concat(buffass)
-                                        const iv = crypto.randomBytes(12)
-                                        const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
-                                        const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
-                                        const tag = cipher.getAuthTag()
-                                        await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
-                                        buffass = []
-                                        length = 0
-                                    }
+                                pqueue.add(() => {
+                                    maxQueue.add(async () => {
+                                        if (length > max) { // bigger than 2mb
+                                            const msg = Buffer.concat(buffass)
+                                            const iv = crypto.randomBytes(12)
+                                            const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
+                                            const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
+                                            const tag = cipher.getAuthTag()
+                                            await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                            buffass = []
+                                            length = 0
+                                        }
+                                    })
                                 })
                                 timeout = setTimeout(() => {
                                     if (!length)
@@ -224,7 +284,9 @@ setImmediate(async () => {
                             const tag = cipher.getAuthTag()
                             await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                             clearInterval(pinger)
+                            clearImmediate(imed)
                             blconn1.quit()
+                            ackconn.quit()
                             sockets.delete(connectionID)
                         })
                     } else

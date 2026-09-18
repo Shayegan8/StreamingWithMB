@@ -11,8 +11,16 @@ const conn = new Redis(config.connstring, {
     keepAlive: 10000
 })
 
+const ack = new Redis(config.connstring, {
+    maxRetriesPerRequest: null,
+    tls: { servername: config.servername },
+    keepAlive: 10000
+})
+
+
 try {
     await conn.ping()
+    await ack.ping()
 } catch (e) {
     logger("conn ping error: " + e, "error")
 }
@@ -25,7 +33,7 @@ function logger(param: string, type?: string) {
 
 const connlist = new Map<string, any>()
 
-const symmetricKey = Buffer.from(config.symmetricKey, "hex")
+const symmetricKey = Buffer.from("632f32241620a2344d348f45298adaf464cb3401f83a0b589c00d6e7a29e24d3y", "hex")
 
 const server = net.createServer((socket) => {
     socket.on('error', (err) => {
@@ -182,7 +190,6 @@ const server = net.createServer((socket) => {
                             connlist.delete(connectionID)
                         })
 
-
                         blconn.on('error', () => {
                             logger("blconn error event: " + connectionID, "error")
                             clearInterval(interv)
@@ -200,11 +207,13 @@ const server = net.createServer((socket) => {
                             socket.end()
                             connlist.delete(connectionID)
                         }
+                        let rtt = Date.now()
                         while (true) {
                             try {
                                 const response = await blconn.brpopBuffer(`appserver,${connectionID}`, 0)
                                 if (!response) {
                                     logger(`end for ${connectionID} from targetServer`, "info")
+                                    conn.del(`ack,${connectionID}`)
                                     await conn.del(`appserver,${connectionID}`)
                                     clearInterval(pinger)
                                     clearInterval(interv)
@@ -213,6 +222,16 @@ const server = net.createServer((socket) => {
                                     socket.end()
                                     break
                                 }
+                                const meseaured = Date.now() - rtt
+                                rtt = Date.now()
+                                const meseauredMsg = Buffer.from(`${meseaured}`, 'binary')
+                                const meseauredIv = crypto.randomBytes(12)
+                                const meseauredCipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, meseauredIv)
+                                const meseauredEncryptedMsg = Buffer.concat([meseauredCipher.update(meseauredMsg), meseauredCipher.final()])
+                                const meseauredTag = meseauredCipher.getAuthTag()
+                                logger(`RTT LPUSH ${connectionID}:${String(Math.fround(meseaured / (1000))).slice(0, 5)}s`, "info")
+                                ack.lpush(`ack,${connectionID}`, Buffer.concat([meseauredIv, meseauredTag, meseauredEncryptedMsg]))
+
                                 const extractIv = response[1].subarray(0, 12)
                                 const tag = response[1].subarray(12, 28)
                                 const encryptedChunk = response[1].subarray(28)
@@ -226,6 +245,7 @@ const server = net.createServer((socket) => {
                                     blconn.quit()
                                     connlist.delete(connectionID)
                                     socket.end()
+                                    conn.del(`ack,${connectionID}`)
                                     await conn.del(`appserver,${connectionID}`)
                                     break
                                 }
@@ -250,6 +270,7 @@ const server = net.createServer((socket) => {
 setInterval(async () => {
     try {
         conn.ping()
+        ack.ping()
     } catch (e) {
         logger("gPinger: " + e, "info")
     }
