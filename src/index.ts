@@ -18,6 +18,7 @@ const ack = new Redis(config.connstring, {
     keepAlive: 10000
 })
 
+
 try {
     await conn.ping()
     await ack.ping()
@@ -169,6 +170,7 @@ const server = net.createServer((socket) => {
                             const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
                             const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                             const tag = cipher.getAuthTag()
+                            conn.del(`ack,${connectionID}`)
                             await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                             clearInterval(pinger)
                             clearInterval(interv)
@@ -235,7 +237,8 @@ const server = net.createServer((socket) => {
                                     await conn.del(`appserver,${connectionID}`)
                                     break
                                 }
-                                socket.write(decryptedChunk)
+                                if (!socket.write(decryptedChunk))
+                                    await new Promise(r => socket.once('drain', r))
                             } catch (error) {
                                 clearInterval(pinger)
                                 clearInterval(interv)

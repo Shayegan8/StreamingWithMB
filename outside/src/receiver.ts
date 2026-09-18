@@ -135,12 +135,12 @@ setImmediate(async () => {
                         const rtt = parseInt(ack)
                         if (rtt)
                             if (rtt > 10000)
-                                max -= (max / 2)
+                                max = Math.max((max / 2), 256 * 1024)
                             else
                                 if (max < (1024 * 1024 * 2))
                                     max += (500 * 1024)
                         if (max > (2 * 1024 * 1024))
-                            max -= (max / 2)
+                            max = Math.max((max / 2), 256 * 1024)
                     }
                 })
 
@@ -151,7 +151,8 @@ setImmediate(async () => {
                     } catch (e) {
                         clearInterval(pinger)
                         clearImmediate(imed)
-
+                        blconn1.quit()
+                        ackconn.quit()
                         sockets.delete(connectionID)
                     }
                 }, 10000)
@@ -272,12 +273,6 @@ setImmediate(async () => {
                         })
                         // notify the proxy appserver dont sends data anymore (half close)
                         appServer.on('end', async () => {
-                            const msg = Buffer.from('end', 'binary')
-                            const iv = crypto.randomBytes(12)
-                            const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
-                            const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
-                            const tag = cipher.getAuthTag()
-                            await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                             clearInterval(pinger)
                             clearImmediate(imed)
                             blconn1.quit()
