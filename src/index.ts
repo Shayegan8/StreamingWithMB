@@ -121,17 +121,23 @@ const server = net.createServer((socket) => {
                                         await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                         buff = []
                                         rtt = Date.now()
-                                        pqueueMax.add(async () => {
-                                            const msgACK = Buffer.from(`${max}`, 'binary')
-                                            const ivACK = crypto.randomBytes(12)
-                                            const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
-                                            const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
-                                            const tagACK = cipherACK.getAuthTag()
-                                            await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
-                                        })
                                     }
                                 }
                             })
+                        }, 100)
+                        let sent = false
+                        const inatervo = setInterval(async () => {
+                            if (!sent) {
+                                sent = true
+                                pqueueMax.add(async () => {
+                                    const msgACK = Buffer.from(`${max}`, 'binary')
+                                    const ivACK = crypto.randomBytes(12)
+                                    const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
+                                    const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
+                                    const tagACK = cipherACK.getAuthTag()
+                                    await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
+                                })
+                            }
                         }, 100)
 
                         const server_reply = Buffer.alloc(10)
@@ -154,6 +160,7 @@ const server = net.createServer((socket) => {
                             tls: { servername: config.servername },
                             keepAlive: 10000
                         })
+
                         const pinger = setInterval(async () => {
                             try {
                                 await blconn.ping()
@@ -218,6 +225,7 @@ const server = net.createServer((socket) => {
                                         socket.end()
                                         break
                                     }
+                                    sent = false
                                     pqueueMax.add(() => {
                                         const meseaured = Date.now() - rtt
                                         if (meseaured > 10000)
