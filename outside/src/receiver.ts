@@ -88,6 +88,7 @@ setImmediate(async () => {
             try {
 
                 let max = 1024 * 1024 * 2 // 2MB start
+                let receivedRTT = 0
                 const maxQueue = new PQueue({
                     concurrency: 1
                 })
@@ -129,13 +130,19 @@ setImmediate(async () => {
                         const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
                         const ack = decryptedChunk.toString('utf8')
                         const rtt = parseInt(ack)
-                        if (rtt)
+                        if (rtt) {
                             if (rtt > 10000) {
-                                if (max > 0)
-                                    max -= (500 * 1024)
+                                if (!receivedRTT) {
+                                    receivedRTT = rtt
+                                    if ((max - (500 * 1024)) > 0)
+                                        max -= (500 * 1024)
+                                } else
+                                    if ((max - (max / 2)) > 0)
+                                        max -= (max / 2)
                             } else
                                 if (max < (1024 * 1024 * 10))
                                     max += (500 * 1024)
+                        }
 
                     }
                 })
