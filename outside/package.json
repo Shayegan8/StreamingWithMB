@@ -11,6 +11,8 @@
     "dev": "node dist/receiver.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1136.0",
+    "@aws-sdk/s3-request-presigner": "^3.1136.0",
     "@types/redis": "^4.0.10",
     "ioredis": "^5.10.1",
     "p-queue": "^9.3.3",

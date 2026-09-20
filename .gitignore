@@ -3,3 +3,5 @@ dist/
 outside/node_modules/
 outside/dist/
 outside/config.json
+config.json
+outside/config.json
