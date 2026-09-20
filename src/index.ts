@@ -3,7 +3,7 @@ import crypto from 'crypto'
 import { exit } from 'process'
 import { Redis } from 'ioredis'
 import PQueue, { PriorityQueue, type QueueAddOptions } from 'p-queue'
-import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, ListObjectsCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, ListObjectsCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import config from "../config.json" with {type: 'json'}
 
 const mode = config.mode
@@ -318,30 +318,64 @@ const server = net.createServer((socket) => {
 
                         socket.on('end', async () => {
                             logger(`Sending half close signal to proxy,${connectionID}`, "info")
+                            let msg: Buffer<ArrayBuffer> | null
+                            let newVersion: Buffer
+                            if (mode != "s3")
+                                msg = Buffer.from('end', 'binary')
+                            else {
+                                const preMsg = Buffer.alloc(13)
+                                const jerk = crypto.randomBytes(10)
+                                newVersion = jerk
+                                jerk.copy(preMsg, 0, 0, 10)
+                                preMsg.write('end', 10)
+                                msg = preMsg
+                            }
+                            const iv = crypto.randomBytes(12)
+                            const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
+                            const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
+                            const tag = cipher.getAuthTag()
                             if (conn) {
                                 conn.del(`ack,${connectionID}`)
                                 conn.del(`appserver,${connectionID}`)
-                                await conn!.del(`proxy,${connectionID}`)
+                                await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                             } else {
                                 logger("Somehow we managed to delete a shit?")
-                                s3.send(
-                                    new DeleteObjectCommand({
+                                try {
+                                    await s3.send(
+                                        new DeleteObjectCommand({
+                                            Bucket: bucketName,
+                                            Key: `ack,${connectionID}`,
+                                        })
+                                    )
+
+                                    await s3.send(new PutObjectCommand({
                                         Bucket: bucketName,
-                                        Key: `ack,${connectionID}`,
-                                    })
-                                ).catch((reason) => {
-                                    logger(`Problem with pushing ack in end ${reason}`, "error")
-                                })
-                                logger("And its passed?")
-                                await s3.send(
-                                    new DeleteObjectCommand({
+                                        Key: `proxy,${connectionID}/${seq}`,
+                                        ACL: 'private',
+                                        Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                    }))
+
+                                    const data2 = await s3.send(new ListObjectsV2Command({
                                         Bucket: bucketName,
-                                        Key: `appserver,${connectionID}`,
-                                    })
-                                ).catch((reason) => {
-                                    logger(`Problem with pushing ack in end ${reason}`, "error")
-                                })
-                                logger("So as this one?")
+                                        Prefix: `appserver,${connectionID}/`,
+                                    }))
+
+                                    const sagjerk2: { Key: string }[] = []
+                                    for (const element of data2.Contents!)
+                                        sagjerk2.push({ Key: element.Key! })
+                                    await s3.send(
+                                        new DeleteObjectsCommand({
+                                            Bucket: bucketName,
+                                            Delete: {
+                                                Objects: sagjerk2,
+                                            },
+                                        })
+                                    )
+
+                                    logger("So as this one?")
+                                } catch (e) {
+                                    logger(`Problem with delete ${e}`, "error")
+                                }
                             }
                             if (pinger)
                                 clearInterval(pinger)
@@ -421,23 +455,42 @@ const server = net.createServer((socket) => {
                                             conn.del(`appserver,${connectionID}`)
                                             await conn!.del(`proxy,${connectionID}`)
                                         } else {
-                                            s3.send(
-                                                new DeleteObjectCommand({
+                                            try {
+                                                await s3.send(
+                                                    new DeleteObjectCommand({
+                                                        Bucket: bucketName,
+                                                        Key: `ack,${connectionID}`,
+                                                    })
+                                                )
+
+                                                await s3.send(new PutObjectCommand({
                                                     Bucket: bucketName,
-                                                    Key: `ack,${connectionID}`,
-                                                })
-                                            ).catch((reason) => {
-                                                logger(`Problem with pushing ack in end ${reason}`, "error")
-                                            })
-                                            await s3.send(
-                                                new DeleteObjectCommand({
+                                                    Key: `proxy,${connectionID}/${seq}`,
+                                                    ACL: 'private',
+                                                    Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                                }))
+
+                                                const data2 = await s3.send(new ListObjectsV2Command({
                                                     Bucket: bucketName,
-                                                    Key: `appserver,${connectionID}`,
-                                                })
-                                            ).catch((reason) => {
-                                                logger(`Problem with pushing ack in end ${reason}`, "error")
-                                            })
-                                            logger("Passed????")
+                                                    Prefix: `appserver,${connectionID}/`,
+                                                }))
+
+                                                const sagjerk2: { Key: string }[] = []
+                                                for (const element of data2.Contents!)
+                                                    sagjerk2.push({ Key: element.Key! })
+                                                await s3.send(
+                                                    new DeleteObjectsCommand({
+                                                        Bucket: bucketName,
+                                                        Delete: {
+                                                            Objects: sagjerk2,
+                                                        },
+                                                    })
+                                                )
+
+                                                logger("So as this one?")
+                                            } catch (e) {
+                                                logger(`Problem with delete ${e}`, "error")
+                                            }
                                         }
                                         socket.end()
                                         break

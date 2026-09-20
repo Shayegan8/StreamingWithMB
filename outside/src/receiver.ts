@@ -221,8 +221,26 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                     sockets.delete(connectionID)
                     if (mode != "s3") {
                         clearInterval(pinger!)
+                        await blconn1!.del(`appserver,${connectionID}`)
                         blconn1!.quit().catch(() => { })
                         ackconn!.quit().catch(() => { })
+                    } else {
+                        const data1 = await s3.send(new ListObjectsV2Command({
+                            Bucket: bucketName,
+                            Prefix: `proxy,${connectionID}/`,
+                        }))
+
+                        const sagjerk: { Key: string }[] = []
+                        for (const element of data1.Contents!)
+                            sagjerk.push({ Key: element.Key! })
+                        await s3.send(
+                            new DeleteObjectsCommand({
+                                Bucket: bucketName,
+                                Delete: {
+                                    Objects: sagjerk,
+                                },
+                            })
+                        )
                     }
                     break
                 }
