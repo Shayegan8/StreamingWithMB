@@ -16,3 +16,5 @@ npm run dev
 Same operation applies for the proxy :)
 
 oh btw the port is 1080
+
+MAYBE i add a mechanism that you can use both s3 and redis, like sending your chunks with redis database and getting them with s3 and backwards, maybe i add udp ip spoof tunneling
