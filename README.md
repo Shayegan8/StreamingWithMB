@@ -1,5 +1,5 @@
 # Streaming over Redis database
-This is a really simple VPN that uses Redis as message bus and routes your traffic through your VPN server with it.
+This is a really simple VPN that uses Redis or AWS S3 Object storage as message bus and routes your traffic through your VPN server with it.
 It uses AES-256-GCM encryption too now. 
 
 # Installation
