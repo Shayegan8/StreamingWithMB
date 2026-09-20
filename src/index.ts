@@ -2,38 +2,90 @@ import net from 'net'
 import crypto from 'crypto'
 import { exit } from 'process'
 import { Redis } from 'ioredis'
-import PQueue from 'p-queue'
+import PQueue, { PriorityQueue, type QueueAddOptions } from 'p-queue'
+import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, ListObjectsCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import config from "../config.json" with {type: 'json'}
 
-import config from '../config.json' with { type: 'json' }
+const mode = config.mode
 
-const conn = new Redis(config.connstring, {
-    maxRetriesPerRequest: null,
-    tls: { servername: config.servername },
-    keepAlive: 10000
-})
+const s3 = new S3Client({
+    region: config.zone,
+    endpoint: config.endpointUrl,
+    credentials: {
+        accessKeyId: config.accessKey,
+        secretAccessKey: config.secretKey,
+    },
+    requestHandler: {
+        httpsAgent: { maxSockets: 10000 },
+    }
+});
 
-const ack = new Redis(config.connstring, {
-    maxRetriesPerRequest: null,
-    tls: { servername: config.servername },
-    keepAlive: 10000
-})
+const bucketName = config.bucket
 
-try {
-    await conn.ping()
-    await ack.ping()
-} catch (e) {
-    logger("conn ping error: " + e, "error")
-}
+let conn: Redis | null
+if (mode != 's3')
+    if (config.tls == "")
+        conn = new Redis(config.connstring, {
+            maxRetriesPerRequest: null,
+            keepAlive: 10000,
+        })
+    else
+        conn = new Redis(config.connstring, {
+            maxRetriesPerRequest: null,
+            keepAlive: 10000,
+            tls: { servername: config.tls }
+        })
+
+let ack: Redis | null
+if (mode != 's3')
+    if (config.tls == "")
+        ack = new Redis(config.connstring, {
+            maxRetriesPerRequest: null,
+            keepAlive: 10000,
+        })
+    else
+        ack = new Redis(config.connstring, {
+            maxRetriesPerRequest: null,
+            keepAlive: 10000,
+            tls: { servername: config.tls }
+        })
+
+if (mode != 's3')
+    try {
+        await conn!.ping()
+        await ack!.ping()
+    } catch (e) {
+        logger("conn ping error: " + e, "error")
+    }
+
+const s3PQueue = new PQueue({ concurrency: 1 })
 
 function logger(param: string, type?: string) {
     const date = new Date(Date.now())
-    console.log(type == "info" ? `[\x1b[33mINFO\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}`
-        : (type == "error" ? `[\x1b[31mERR\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}` : param))
+    console.log(type == "info" ? `[\x1b[33mINFO\x1b[0m] [\x1b[32m${mode}\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}`
+        : (type == "error" ? `[\x1b[31mERR\x1b[0m] [\x1b[32m${mode}\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}` : param))
 }
 
 const connlist = new Map<string, any>()
 
 const symmetricKey = Buffer.from(config.symmetricKey, "hex")
+
+const popperBuffer = async (key: string) => {
+    try {
+        const data = await s3.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
+        await s3.send(
+            new DeleteObjectCommand({
+                Bucket: bucketName,
+                Key: key,
+            })
+        )
+        logger("Seems like we actually got the buffer")
+        return await data.Body!.transformToByteArray()
+    } catch (e) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 100))
+        return await popperBuffer(key)
+    }
+}
 
 const server = net.createServer((socket) => {
     socket.on('error', (err) => {
@@ -88,8 +140,23 @@ const server = net.createServer((socket) => {
                         const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
                         const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                         const tag = cipher.getAuthTag()
-                        await conn.lpush(`inform`, Buffer.concat([iv, tag, encryptedMsg]))
-
+                        if (conn)
+                            await conn.lpush(`inform`, Buffer.concat([iv, tag, encryptedMsg]))
+                        else {
+                            const key = crypto.randomBytes(10).toString('hex')
+                            logger("Seems like we are sending inform WITH THIS HASH " + key)
+                            await s3PQueue.add(async () => {
+                                await s3.send(new PutObjectCommand({
+                                    Bucket: bucketName,
+                                    Key: `informs/${key}`,
+                                    ACL: 'private',
+                                    Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                })).catch((reason) => {
+                                    logger(`Problem with pushing inform ${reason}`, "error")
+                                })
+                            })
+                            logger("Seems like sending inform got passed")
+                        }
                         let pqueue = new PQueue({ concurrency: 1 })
                         let buff: Buffer[] = []
                         socket.on('data', (data: Buffer) => {
@@ -103,6 +170,7 @@ const server = net.createServer((socket) => {
                         let length = 0
                         let rtt = 0
                         let max = 2 * 1024 * 1024
+                        let seq = "0"
                         const pqueueMax = new PQueue({ concurrency: 1 })
                         const interv = setInterval(async () => {
                             pqueue.add(async () => {
@@ -118,7 +186,20 @@ const server = net.createServer((socket) => {
                                         const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
                                         const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                                         const tag = cipher.getAuthTag()
-                                        await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                        if (conn)
+                                            await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                        else {
+                                            logger("Ok here! " + `proxy,${connectionID}/${seq}`)
+                                            await s3.send(new PutObjectCommand({
+                                                Bucket: bucketName,
+                                                Key: `proxy,${connectionID}/${seq}`,
+                                                ACL: 'private',
+                                                Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                            })).catch((reason) => {
+                                                logger(`Problem with pushing batch after informing ${reason}`, "error")
+                                            })
+                                            logger("Done?")
+                                        }
                                         buff = []
                                         sent = true
                                         pqueueMax.add(async () => {
@@ -127,7 +208,20 @@ const server = net.createServer((socket) => {
                                             const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
                                             const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
                                             const tagACK = cipherACK.getAuthTag()
-                                            await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
+                                            if (conn)
+                                                await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
+                                            else {
+                                                logger("Ok we are sending rtt")
+                                                await s3.send(new PutObjectCommand({
+                                                    Bucket: bucketName,
+                                                    Key: `ack,${connectionID}`,
+                                                    ACL: 'private',
+                                                    Body: Buffer.concat([ivACK, tagACK, encryptedMsgACK]),
+                                                })).catch((reason) => {
+                                                    logger(`Problem with pushing ack after informing ${reason}`, "error")
+                                                })
+                                                logger("Seems like sending rtt got passed? lol")
+                                            }
                                             rtt = Date.now()
                                         })
                                     }
@@ -137,14 +231,28 @@ const server = net.createServer((socket) => {
                         let sent = false
                         const inatervo = setInterval(async () => {
                             if (!sent) {
+                                sent = true
+                                rtt = Date.now()
                                 pqueueMax.add(async () => {
                                     const msgACK = Buffer.from(`${max}`, 'binary')
                                     const ivACK = crypto.randomBytes(12)
                                     const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
                                     const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
                                     const tagACK = cipherACK.getAuthTag()
-                                    await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
-                                    rtt = Date.now()
+                                    if (conn)
+                                        await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
+                                    else {
+                                        logger("Ok we are sending rtt in interval")
+                                        await s3.send(new PutObjectCommand({
+                                            Bucket: bucketName,
+                                            Key: `ack,${connectionID}`,
+                                            ACL: 'private',
+                                            Body: Buffer.concat([ivACK, tagACK, encryptedMsgACK]),
+                                        })).catch((reason) => {
+                                            logger(`Problem with pushing ack after informing ${reason}`, "error")
+                                        })
+                                        logger("This passed again?")
+                                    }
                                 })
                             }
                         }, 100)
@@ -164,80 +272,111 @@ const server = net.createServer((socket) => {
                         server_reply[9] = 0
                         socket.write(server_reply)
                         logger(`CONNECT done for ${connectionID} with ${DSTADDR} destination`, "info")
-                        const blconn = new Redis(config.connstring, {
-                            maxRetriesPerRequest: null,
-                            tls: { servername: config.servername },
-                            keepAlive: 10000
-                        })
-
-                        const pinger = setInterval(async () => {
-                            try {
-                                await blconn.ping()
-                            } catch (e) {
-                                logger("pinger: " + e, "info")
-                                clearInterval(pinger)
-                                clearInterval(inatervo)
-                                clearInterval(interv)
-                                clearImmediate(imedo)
-                                socket.end()
-                                connlist.delete(connectionID)
-                            }
-                        }, 10000)
+                        let blconn: Redis | null
+                        if (mode != "s3")
+                            if (config.tls == "")
+                                blconn = new Redis(config.connstring, {
+                                    maxRetriesPerRequest: null,
+                                    keepAlive: 10000,
+                                })
+                            else
+                                blconn = new Redis(config.connstring, {
+                                    maxRetriesPerRequest: null,
+                                    keepAlive: 10000,
+                                    tls: { servername: config.tls }
+                                })
+                        let pinger: NodeJS.Timeout | null
+                        if (mode != "s3")
+                            pinger = setInterval(async () => {
+                                try {
+                                    await blconn!.ping()
+                                } catch (e) {
+                                    logger("pinger: " + e, "info")
+                                    clearInterval(pinger!)
+                                    clearInterval(interv)
+                                    clearInterval(inatervo)
+                                    clearImmediate(imedo)
+                                    conn!.del(`ack,${connectionID}`)
+                                    conn!.del(`appserver,${connectionID}`)
+                                    await conn!.del(`proxy,${connectionID}`)
+                                    socket.end()
+                                    connlist.delete(connectionID)
+                                }
+                            }, 10000)
 
                         socket.once('error', (e) => {
                             logger(`Client error: ${e}`, "error")
-                            clearInterval(pinger)
-                            clearInterval(interv)
+                            if (pinger)
+                                clearInterval(pinger)
                             clearInterval(inatervo)
+                            clearInterval(interv)
                             clearImmediate(imedo)
-                            blconn.quit().catch(() => { })
+                            if (blconn)
+                                blconn.quit().catch(() => { })
                             connlist.delete(connectionID)
                         })
 
                         socket.on('end', async () => {
                             logger(`Sending half close signal to proxy,${connectionID}`, "info")
-                            const msg = Buffer.from('end', 'binary')
-                            const iv = crypto.randomBytes(12)
-                            const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
-                            const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
-                            const tag = cipher.getAuthTag()
-                            conn.del(`ack,${connectionID}`)
-                            await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
-                            clearInterval(pinger)
-                            clearImmediate(imedo)
+                            if (conn) {
+                                conn.del(`ack,${connectionID}`)
+                                conn.del(`appserver,${connectionID}`)
+                                await conn!.del(`proxy,${connectionID}`)
+                            } else {
+                                logger("Somehow we managed to delete a shit?")
+                                s3.send(
+                                    new DeleteObjectCommand({
+                                        Bucket: bucketName,
+                                        Key: `ack,${connectionID}`,
+                                    })
+                                ).catch((reason) => {
+                                    logger(`Problem with pushing ack in end ${reason}`, "error")
+                                })
+                                logger("And its passed?")
+                                await s3.send(
+                                    new DeleteObjectCommand({
+                                        Bucket: bucketName,
+                                        Key: `appserver,${connectionID}`,
+                                    })
+                                ).catch((reason) => {
+                                    logger(`Problem with pushing ack in end ${reason}`, "error")
+                                })
+                                logger("So as this one?")
+                            }
+                            if (pinger)
+                                clearInterval(pinger)
                             clearInterval(inatervo)
+                            clearImmediate(imedo)
                             clearInterval(interv)
-                            blconn.quit().catch(() => { })
+                            if (blconn)
+                                blconn.quit().catch(() => { })
                             connlist.delete(connectionID)
                         })
 
-                        blconn.on('error', () => {
-                            logger("blconn error event: " + connectionID, "error")
-                            clearInterval(interv)
-                            clearInterval(pinger)
-                            clearInterval(inatervo)
-                            clearImmediate(imedo)
-                            socket.end()
-                            connlist.delete(connectionID)
-                            blconn.disconnect(false)
-                        })
+                        if (mode != "s3")
+                            blconn!.on('error', () => {
+                                logger("blconn error event: " + connectionID, "error")
+                                clearInterval(interv)
+                                clearInterval(pinger!)
+                                clearInterval(inatervo)
+                                clearImmediate(imedo)
+                                conn!.del(`ack,${connectionID}`)
+                                conn!.del(`appserver,${connectionID}`)
+                                conn!.del(`proxy,${connectionID}`)
+                                connlist.delete(connectionID)
+                                blconn!.disconnect(false)
+                                socket.end()
+                            })
 
                         const imedo = setImmediate(async () => {
                             while (true) {
                                 try {
-                                    const response = await blconn.brpopBuffer(`appserver,${connectionID}`, 0)
-                                    if (!response) {
-                                        logger(`end for ${connectionID} from targetServer`, "info")
-                                        conn.del(`ack,${connectionID}`)
-                                        await conn.del(`appserver,${connectionID}`)
-                                        clearInterval(pinger)
-                                        clearInterval(inatervo)
-                                        clearInterval(interv)
-                                        clearImmediate(imedo)
-                                        blconn.quit().catch(() => { })
-                                        connlist.delete(connectionID)
-                                        socket.end()
-                                        break
+                                    let response: Uint8Array<ArrayBufferLike> | undefined
+                                    if (blconn)
+                                        response = (await blconn.brpopBuffer(`appserver,${connectionID}`, 0))?.[1]
+                                    else {
+                                        logger(`appserver,${connectionID}/${seq}`)
+                                        response = await popperBuffer(`appserver,${connectionID}/${seq}`)
                                     }
                                     sent = false
                                     pqueueMax.add(() => {
@@ -249,35 +388,71 @@ const server = net.createServer((socket) => {
                                                 max += (500 * 1024)
                                         if (max > (2 * 1024 * 1024))
                                             max = Math.max((max / 2), 256 * 1024)
-                                        logger(`RTT LPUSH ${connectionID}:${String(Math.fround(meseaured / (1000))).slice(0, 5)}s for received packet with length of ${Math.fround(response?.[1].length / (1024 * 1024))}mb`, "info")
+                                        logger(`RTT ${connectionID}:${String(Math.fround(meseaured / (1000))).slice(0, 5)}s for received packet with length of ${Math.fround(response!.length / (1024 * 1024))}mb`, "info")
                                     })
 
-                                    const extractIv = response[1].subarray(0, 12)
-                                    const tag = response[1].subarray(12, 28)
-                                    const encryptedChunk = response[1].subarray(28)
+                                    const extractIv = response!.subarray(0, 12)
+                                    const tag = response!.subarray(12, 28)
+                                    const encryptedChunk = response!.subarray(28)
                                     const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
                                     decipher.setAuthTag(tag)
-                                    const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
+                                    let decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
+                                    let version: string | null
+                                    if (mode == "s3") {
+                                        version = decryptedChunk.subarray(0, 10).toString('hex')
+                                        logger("THIS IS THE VERSSSSIOOON " + version)
+                                        seq = version
+                                        const realMsg = decryptedChunk.subarray(10)
+                                        decryptedChunk = realMsg
+                                    }
                                     if (!Buffer.from('end', 'binary').compare(decryptedChunk)) {
                                         logger(`server chunk for ${connectionID} is null`, "info")
-                                        clearInterval(pinger)
+                                        if (pinger)
+                                            clearInterval(pinger)
+                                        clearInterval(inatervo)
                                         clearInterval(interv)
                                         clearImmediate(imedo)
-                                        clearInterval(inatervo)
-                                        blconn.quit().catch(() => { })
-                                        connlist.delete(connectionID)
+                                        if (blconn)
+                                            blconn.quit().catch(() => { })
                                         socket.end()
-                                        conn.del(`ack,${connectionID}`)
-                                        await conn.del(`appserver,${connectionID}`)
+                                        connlist.delete(connectionID)
+                                        if (conn) {
+                                            conn.del(`ack,${connectionID}`)
+                                            conn.del(`appserver,${connectionID}`)
+                                            await conn!.del(`proxy,${connectionID}`)
+                                        } else {
+                                            s3.send(
+                                                new DeleteObjectCommand({
+                                                    Bucket: bucketName,
+                                                    Key: `ack,${connectionID}`,
+                                                })
+                                            ).catch((reason) => {
+                                                logger(`Problem with pushing ack in end ${reason}`, "error")
+                                            })
+                                            await s3.send(
+                                                new DeleteObjectCommand({
+                                                    Bucket: bucketName,
+                                                    Key: `appserver,${connectionID}`,
+                                                })
+                                            ).catch((reason) => {
+                                                logger(`Problem with pushing ack in end ${reason}`, "error")
+                                            })
+                                            logger("Passed????")
+                                        }
+                                        socket.end()
                                         break
                                     }
                                     socket?.write(decryptedChunk)
                                 } catch (error) {
-                                    clearInterval(pinger)
+                                    if (mode != "s3")
+                                        clearInterval(pinger!)
                                     clearInterval(inatervo)
                                     clearImmediate(imedo)
                                     clearInterval(interv)
                                     connlist.delete(connectionID)
+                                    conn!.del(`ack,${connectionID}`)
+                                    conn!.del(`proxy,${connectionID}`)
+                                    await conn!.del(`appserver,${connectionID}`)
                                     socket.end()
                                     break
                                 }
@@ -292,14 +467,15 @@ const server = net.createServer((socket) => {
     })
 })
 
-setInterval(async () => {
-    try {
-        await conn.ping()
-        await ack.ping()
-    } catch (e) {
-        logger("gPinger: " + e, "info")
-    }
-}, 10000)
+if (mode != "s3")
+    setInterval(async () => {
+        try {
+            await conn!.ping()
+            await ack!.ping()
+        } catch (e) {
+            logger("gPinger: " + e, "info")
+        }
+    }, 10000)
 
 process.on('uncaughtException', (error) => {
     logger(`Uncaught exception ${error}`, "error")
@@ -308,7 +484,31 @@ process.on('uncaughtException', (error) => {
 process.on('SIGTERM', async () => {
     logger("Stopping the server", "info")
     server.close()
-    await conn.flushdb()
+    if (conn)
+        await conn.flushdb()
+    else {
+        try {
+            const data = await s3.send(
+                new ListObjectsCommand({
+                    Bucket: bucketName,
+                })
+            )
+            let sagjerk: { Key: string }[] = []
+            for (const element of data.Contents!)
+                sagjerk.push({ Key: element.Key! })
+            await s3.send(
+                new DeleteObjectsCommand({
+                    Bucket: bucketName,
+                    Delete: {
+                        Objects: sagjerk,
+                    },
+                })
+            )
+        } catch (reason) {
+            logger(`Problem with getting all chunks or deleting them ${reason}`, "error")
+        }
+    }
+
     logger("Removing chunks completed", "info")
     exit(0)
 })
@@ -316,7 +516,30 @@ process.on('SIGTERM', async () => {
 process.on('SIGINT', async () => {
     logger("Stopping the server", "info")
     server.close()
-    await conn.flushdb()
+    if (conn)
+        await conn.flushdb()
+    else {
+        try {
+            const data = await s3.send(
+                new ListObjectsCommand({
+                    Bucket: bucketName,
+                })
+            )
+            let sagjerk: { Key: string }[] = []
+            for (const element of data.Contents!)
+                sagjerk.push({ Key: element.Key! })
+            await s3.send(
+                new DeleteObjectsCommand({
+                    Bucket: bucketName,
+                    Delete: {
+                        Objects: sagjerk,
+                    },
+                })
+            )
+        } catch (reason) {
+            logger(`Problem with getting all chunks or deleting them ${reason}`, "error")
+        }
+    }
     logger("Removing chunks completed", "info")
     exit(0)
 })
