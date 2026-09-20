@@ -13,6 +13,21 @@ After that
 npm run dev
 ```
 
+Sample config
+```
+{
+    "connstring": "redis url",
+    "tls": "if you have tls enabled put your redis destination host here",
+    "symmetricKey": "generate a 32 byte symmetric key and turn to hex",
+    "mode": "s3 or redis",
+    "secretKey": "if you use s3 you need your secret key",
+    "accessKey": "you need access key for s3",
+    "endpointUrl": "your s3 object storage url here",
+    "zone": "the zone",
+    "bucket": "and your bucket"
+}
+```
+
 Same operation applies for the proxy :)
 
 oh btw the port is 1080
