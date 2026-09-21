@@ -24,6 +24,7 @@ Sample config
     "accessKey": "you need access key for s3",
     "endpointUrl": "your s3 object storage url here",
     "zone": "the zone",
+    "ackS3": false,
     "bucket": "and your bucket"
 }
 ```
