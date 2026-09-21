@@ -29,6 +29,24 @@ const s3 = new S3Client({
     }
 })
 
+const s3Delete = new S3Client({
+    region: config.zone,
+    endpoint: config.endpointUrl,
+    credentials: {
+        accessKeyId: config.accessKey,
+        secretAccessKey: config.secretKey,
+    },
+    requestHandler: {
+        httpsAgent: new https.Agent({
+            keepAlive: true,
+            keepAliveMsecs: 5000,
+            maxSockets: 128,
+            maxFreeSockets: 32,
+            timeout: 30000,
+        })
+    }
+})
+
 const bucketName = config.bucket
 
 let conn: Redis | null
@@ -646,7 +664,7 @@ setImmediate(async () => {
                         logger("OK so now this means we really have the shit out of it")
                         callback(await daljerk.Body!.transformToByteArray())
                     }
-                await s3.send(
+                await s3Delete.send(
                     new DeleteObjectsCommand({
                         Bucket: bucketName,
                         Delete: {
