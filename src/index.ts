@@ -77,6 +77,7 @@ const connlist = new Map<string, any>()
 const symmetricKey = Buffer.from(config.symmetricKey, "hex")
 
 const popperBuffer = async (key: string, s3Client: S3Client) => {
+    let delay = 20
     for (let i = 0; i < 200; i++) {
         try {
             const data = await s3Client.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
@@ -90,6 +91,7 @@ const popperBuffer = async (key: string, s3Client: S3Client) => {
             return await data.Body!.transformToByteArray()
         } catch (e) {
             await new Promise(r => setTimeout(r, 500))
+            delay = Math.min(delay * 2, 500)
         }
     }
 }
@@ -217,26 +219,6 @@ const server = net.createServer((socket) => {
                                     } else {
                                         logger("So this is the old version " + `proxy,${connectionID}/${inSeq}`)
                                         rtt = Date.now()
-                                        await new Promise<void>((resolve) => {
-                                            const iv = setInterval(() => {
-                                                if (firstTime) {
-                                                    firstTime = false
-                                                    clearInterval(iv)
-                                                    clearTimeout(tm)
-                                                    resolve()
-                                                }
-                                                if (inSeqUsedByOutseq) {
-                                                    inSeqUsedByOutseq = false
-                                                    clearInterval(iv)
-                                                    clearTimeout(tm)
-                                                    resolve()
-                                                }
-                                            }, 100)
-                                            const tm = setTimeout(() => {
-                                                clearInterval(iv)
-                                                resolve()
-                                            }, 10000)
-                                        })
                                         await s31!.send(new PutObjectCommand({
                                             Bucket: bucketName,
                                             Key: `proxy,${connectionID}/${inSeq}`,
@@ -278,8 +260,6 @@ const server = net.createServer((socket) => {
 
                         let max = 2 * 1024 * 1024
                         let inSeq = "0"
-                        let firstTime = true
-                        let inSeqUsedByOutseq = false
                         const pqueueMax = new PQueue({ concurrency: 1 })
                         let sent = false
                         let inatervo: NodeJS.Timeout | null
@@ -523,7 +503,6 @@ const server = net.createServer((socket) => {
                                         socket.end()
                                         break
                                     }
-                                    inSeqUsedByOutseq = true
                                     sent = false
                                     if (config.ackS3 || mode != "s3")
                                         pqueueMax.add(() => {

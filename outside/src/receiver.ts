@@ -146,6 +146,7 @@ function logger(param: string, type?: string) {
 
 async function popperBuffer2(key: string, connectionID: string, s3Client: S3Client) {
     let dangoz = Date.now()
+    let delay = 10
     for (let i = 0; i < 200; i++) {
         try {
             if (sockets.get(connectionID)?.abort) {
@@ -184,7 +185,8 @@ async function popperBuffer2(key: string, connectionID: string, s3Client: S3Clie
             logger("Fucked?")
             return await data.Body!.transformToByteArray()
         } catch {
-            await new Promise(r => setTimeout(r, 500))
+            await new Promise(r => setTimeout(r, delay))
+            delay = Math.min(delay * 2, 500)
         }
     }
 }
@@ -276,16 +278,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
             let ack = 2 * 1024 * 1024
             let inSeq = "0"
             let outSeq = "0"
-            let seqChanged = true
-            while (mode == "s3" ? await new Promise<Boolean>((resolve) => {
-                const ass = setInterval(() => {
-                    if (seqChanged) {
-                        clearInterval(ass)
-                        resolve(true)
-                    }
-                }, 100)
-            }) : true) {
-                seqChanged = false
+            while (mode == "s3" ? !(sockets.get(connectionID)?.abort) : true) {
                 let request: Uint8Array<ArrayBufferLike> | undefined
                 if (mode != "s3")
                     request = (await blconn1!.brpopBuffer(`proxy,${connectionID}`, 20))?.[1]
@@ -385,7 +378,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
 
                 let buffered: Uint8Array<ArrayBufferLike> | undefined
                 if (mode != "s3") {
-                    buffered = (await ackconn!.brpopBuffer(`ack,${connectionID}`, 0))?.[1]
+                    buffered = (await ackconn!.brpopBuffer(`ack,${connectionID}`, 20))?.[1]
                 } else if (config.ackS3) {
                     buffered = await popperBuffer2(`ack,${connectionID}`, connectionID, s31!)
                 }
@@ -579,7 +572,6 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                                             logger(`Problem with pushing appserver batch ${reason}`, "error")
                                         })
                                         outSeq = newVersion!.toString('hex')
-                                        seqChanged = true
                                         logger("And it passed?")
                                     }
                                     buffass = []
@@ -621,7 +613,6 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                                             logger(`Problem with pushing appserver batch ${reason}`, "error")
                                         })
                                         outSeq = newVersion!.toString('hex')
-                                        seqChanged = true
                                         logger("It passed so means the fucking version is now this " + outSeq)
                                     }
                                     buffass = []
@@ -638,7 +629,6 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                             ackconn!.quit().catch(() => { })
                             sockets.delete(connectionID)
                         } else {
-                            seqChanged = true
                             sockets.set(connectionID, { socket: undefined, abort: true })
                         }
                     })
@@ -654,7 +644,7 @@ const sockets = new Map<string, { socket: Socket | undefined, abort: boolean }>(
 setImmediate(async () => {
     while (true) {
         if (blconn)
-            callback((await blconn.brpopBuffer(`inform`, 0))?.[1]!)
+            callback((await blconn.brpopBuffer(`inform`, 20))?.[1]!)
         else {
             try {
                 // and i wait here for client that he deleted directory, with this way we can send all packets from client
