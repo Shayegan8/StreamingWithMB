@@ -92,12 +92,13 @@ const popperBuffer = async (key: string) => {
         }
     }
 }
-
 let toDelete: string[] = []
-const toDeletePQueue = new PQueue()
-setInterval(async () => {
-    toDeletePQueue.add(async () => {
-        for (const connectionID of toDelete) {
+if (mode == "s3")
+    setInterval(async () => {
+        if (toDelete.length === 0) return
+        const toDeleteCopy = toDelete
+        toDelete = []
+        for (const connectionID of toDeleteCopy) {
             const data2 = await s3.send(new ListObjectsV2Command({
                 Bucket: bucketName,
                 Prefix: `appserver,${connectionID}/`,
@@ -117,9 +118,7 @@ setInterval(async () => {
                 )
             }
         }
-        toDelete = []
-    })
-}, 300)
+    }, 300)
 
 const server = net.createServer((socket) => {
     socket.on('error', (err) => {
@@ -406,9 +405,7 @@ const server = net.createServer((socket) => {
                                         ACL: 'private',
                                         Body: Buffer.concat([iv, tag, encryptedMsg]),
                                     }))
-                                    toDeletePQueue.add(() => {
-                                        toDelete.push(connectionID)
-                                    })
+                                    toDelete.push(connectionID)
                                     logger("So as this one?")
                                 }
                                 if (pinger)
@@ -480,9 +477,7 @@ const server = net.createServer((socket) => {
                                                 ACL: 'private',
                                                 Body: Buffer.concat([iv, tag, encryptedMsg]),
                                             }))
-                                            toDeletePQueue.add(() => {
-                                                toDelete.push(connectionID)
-                                            })
+                                            toDelete.push(connectionID)
                                             logger("So as this one?")
                                         }
                                         socket.end()
@@ -551,9 +546,7 @@ const server = net.createServer((socket) => {
                                                 Body: Buffer.concat([iv, tag, encryptedMsg]),
                                             }))
 
-                                            toDeletePQueue.add(() => {
-                                                toDelete.push(connectionID)
-                                            })
+                                            toDelete.push(connectionID)
                                             logger("So as this one?")
                                         }
                                         socket.end()
@@ -592,9 +585,7 @@ const server = net.createServer((socket) => {
                                                 Body: Buffer.concat([iv, tag, encryptedMsg]),
                                             }))
 
-                                            toDeletePQueue.add(() => {
-                                                toDelete.push(connectionID)
-                                            })
+                                            toDelete.push(connectionID)
                                             logger("So as this one?")
                                         }
                                     }

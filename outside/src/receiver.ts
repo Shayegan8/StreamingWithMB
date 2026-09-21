@@ -66,10 +66,12 @@ if (mode != "s3")
 
 
 let toDelete: string[] = []
-const toDeletePQueue = new PQueue()
-setInterval(async () => {
-    toDeletePQueue.add(async () => {
-        for (const connectionID of toDelete) {
+if (mode == "s3")
+    setInterval(async () => {
+        if (toDelete.length === 0) return
+        const toDeleteCopy = toDelete
+        toDelete = []
+        for (const connectionID of toDeleteCopy) {
             const data2 = await s3.send(new ListObjectsV2Command({
                 Bucket: bucketName,
                 Prefix: `appserver,${connectionID}/`,
@@ -89,10 +91,7 @@ setInterval(async () => {
                 )
             }
         }
-        toDelete = []
-    })
-}, 300)
-
+    }, 300)
 
 //DNS RESOLVE, for now its not optimized but works atleast
 const workingDNSes = new Map<string, { ip: string, requiredTime: number }>() // Map<address, ip>
@@ -247,6 +246,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 }
                 logger("IS this because of that proxy, shit?")
                 if (!request) {
+                    logger("Request issue")
                     sockets.get(connectionID)?.end()
                     sockets.delete(connectionID)
                     if (mode != "s3") {
@@ -255,9 +255,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         blconn1!.quit().catch(() => { })
                         ackconn!.quit().catch(() => { })
                     } else {
-                        toDeletePQueue.add(() => {
-                            toDelete.push(connectionID)
-                        })
+                        toDelete.push(connectionID)
                     }
                     break
                 }
@@ -284,9 +282,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         blconn1!.quit().catch(() => { })
                         ackconn!.quit().catch(() => { })
                     } else {
-                        toDeletePQueue.add(() => {
-                            toDelete.push(connectionID)
-                        })
+                        toDelete.push(connectionID)
                     }
                     break
                 }
@@ -297,6 +293,21 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 } else {
                     buffered = await popperBuffer2(`ack,${connectionID}`)
                 }
+                if (!buffered) {
+                    logger("Buffered issue")
+                    sockets.get(connectionID)?.end()
+                    sockets.delete(connectionID)
+                    if (mode != "s3") {
+                        clearInterval(pinger!)
+                        await blconn1!.del(`ack,${connectionID}`)
+                        blconn1!.quit().catch(() => { })
+                        ackconn!.quit().catch(() => { })
+                    } else {
+                        toDelete.push(connectionID)
+                    }
+                    break
+                }
+
                 const extractIvACK = buffered!.subarray(0, 12)
                 const tagACK = buffered!.subarray(12, 28)
                 const encryptedChunkACK = buffered!.subarray(28)
@@ -508,22 +519,28 @@ setImmediate(async () => {
                     Bucket: bucketName,
                     Prefix: "informs/",
                 }))
+
+                let sagjerk: { Key: string }[] = []
+
                 if (data.Contents && data.Contents.length != 0)
                     for (const element of data.Contents) {
                         logger("Name of that " + element.Key)
+                        sagjerk.push({ Key: element.Key! })
                         const daljerk = await s3.send(new GetObjectCommand({
                             Bucket: bucketName, Key: element.Key
                         }))
 
-                        await s3.send(
-                            new DeleteObjectCommand({
-                                Bucket: bucketName,
-                                Key: element.Key
-                            })
-                        )
                         logger("OK so now this means we really have the shit out of it")
                         callback(await daljerk.Body!.transformToByteArray())
                     }
+                await s3.send(
+                    new DeleteObjectsCommand({
+                        Bucket: bucketName,
+                        Delete: {
+                            Objects: sagjerk,
+                        },
+                    })
+                )
                 // I send the client that you should remove the directory
             } catch (e) {
 
