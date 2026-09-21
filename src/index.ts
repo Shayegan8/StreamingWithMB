@@ -130,12 +130,14 @@ const connlist = new Map<string, any>()
 
 const symmetricKey = Buffer.from(config.symmetricKey, "hex")
 
-const popperBuffer = async (key: string, s3Client: S3Client) => {
+const popperBuffer = async (key: string, abrt: AbortController) => {
     let delay = 20
     for (let i = 0; i < 200; i++) {
         try {
-            const data = await s3Client.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
-            await s3Client.send(
+            if (abrt.signal.aborted)
+                break
+            const data = await s3g.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
+            await s3g.send(
                 new DeleteObjectCommand({
                     Bucket: bucketName,
                     Key: key,
@@ -344,6 +346,7 @@ const server = net.createServer((socket) => {
                         socket.write(server_reply)
                         logger(`CONNECT done for ${connectionID} with ${DSTADDR} destination`, "info")
                         let blconn: Redis | null
+                        const ctl = new AbortController()
                         if (mode != "s3")
                             if (config.tls == "")
                                 blconn = new Redis(config.connstring, {
@@ -428,6 +431,7 @@ const server = net.createServer((socket) => {
                                 if (inatervo)
                                     clearInterval(inatervo)
                                 clearImmediate(imedo)
+                                ctl.abort()
                                 if (blconn)
                                     blconn.quit().catch(() => { })
                                 connlist.delete(connectionID)
@@ -450,14 +454,14 @@ const server = net.createServer((socket) => {
 
                         let outSeq = "0"
                         const imedo = setImmediate(async () => {
-                            while (true) {
+                            while (!ctl.signal.aborted) {
                                 try {
                                     let response: Uint8Array<ArrayBufferLike> | undefined
                                     if (blconn)
                                         response = (await blconn.brpopBuffer(`appserver,${connectionID}`, 20))?.[1]
                                     else {
                                         logger(`appserver,${connectionID}/${outSeq}`)
-                                        response = await popperBuffer(`appserver,${connectionID}/${outSeq}`, s3g)
+                                        response = await popperBuffer(`appserver,${connectionID}/${outSeq}`, ctl)
                                     }
                                     if (!response) {
                                         logger(`server chunk for ${connectionID} is null`, "info")
