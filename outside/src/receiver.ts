@@ -225,8 +225,8 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         }))
 
                         const sagjerk: { Key: string }[] = []
-                        if (data1.Contents!.length != 0) {
-                            for (const element of data1.Contents!)
+                        if (data1.Contents && data1.Contents.length != 0) {
+                            for (const element of data1.Contents)
                                 sagjerk.push({ Key: element.Key! })
                             await s3.send(
                                 new DeleteObjectsCommand({
@@ -269,8 +269,8 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         }))
 
                         const sagjerk: { Key: string }[] = []
-                        if (data1.Contents!.length != 0) {
-                            for (const element of data1.Contents!)
+                        if (data1.Contents && data1.Contents.length != 0) {
+                            for (const element of data1.Contents)
                                 sagjerk.push({ Key: element.Key! })
                             await s3.send(
                                 new DeleteObjectsCommand({
@@ -502,8 +502,8 @@ setImmediate(async () => {
                     Bucket: bucketName,
                     Prefix: "informs/",
                 }))
-                if (data.Contents!.length != 0)
-                    for (const element of data.Contents!) {
+                if (data.Contents && data.Contents.length != 0)
+                    for (const element of data.Contents) {
                         logger("Name of that " + element.Key)
                         const daljerk = await s3.send(new GetObjectCommand({
                             Bucket: bucketName, Key: element.Key
@@ -550,8 +550,8 @@ process.on('SIGTERM', async () => {
                 })
             )
             let sagjerk: { Key: string }[] = []
-            if (data.Contents!.length != 0) {
-                for (const element of data.Contents!)
+            if (data.Contents && data.Contents.length != 0) {
+                for (const element of data.Contents)
                     sagjerk.push({ Key: element.Key! })
                 await s3.send(
                     new DeleteObjectsCommand({
@@ -580,8 +580,8 @@ process.on('SIGINT', async () => {
                 })
             )
             let sagjerk: { Key: string }[] = []
-            if (data.Contents!.length != 0) {
-                for (const element of data.Contents!)
+            if (data.Contents && data.Contents.length != 0) {
+                for (const element of data.Contents)
                     sagjerk.push({ Key: element.Key! })
                 await s3.send(
                     new DeleteObjectsCommand({

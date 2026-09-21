@@ -370,8 +370,8 @@ const server = net.createServer((socket) => {
                                 }))
 
                                 const sagjerk2: { Key: string }[] = []
-                                if (data2.Contents!.length != 0) {
-                                    for (const element of data2.Contents!)
+                                if (data2.Contents && data2.Contents.length != 0) {
+                                    for (const element of data2.Contents)
                                         sagjerk2.push({ Key: element.Key! })
                                     await s3.send(
                                         new DeleteObjectsCommand({
@@ -459,8 +459,8 @@ const server = net.createServer((socket) => {
                                             }))
 
                                             const sagjerk2: { Key: string }[] = []
-                                            if (data2.Contents!.length != 0) {
-                                                for (const element of data2.Contents!)
+                                            if (data2.Contents && data2.Contents.length != 0) {
+                                                for (const element of data2.Contents)
                                                     sagjerk2.push({ Key: element.Key! })
                                                 await s3.send(
                                                     new DeleteObjectsCommand({
@@ -545,8 +545,8 @@ const server = net.createServer((socket) => {
                                             }))
 
                                             const sagjerk2: { Key: string }[] = []
-                                            if (data2.Contents!.length != 0) {
-                                                for (const element of data2.Contents!)
+                                            if (data2.Contents && data2.Contents.length != 0) {
+                                                for (const element of data2.Contents)
                                                     sagjerk2.push({ Key: element.Key! })
                                                 await s3.send(
                                                     new DeleteObjectsCommand({
@@ -601,8 +601,8 @@ const server = net.createServer((socket) => {
                                             }))
 
                                             const sagjerk2: { Key: string }[] = []
-                                            if (data2.Contents!.length != 0) {
-                                                for (const element of data2.Contents!)
+                                            if (data2.Contents && data2.Contents.length != 0) {
+                                                for (const element of data2.Contents)
                                                     sagjerk2.push({ Key: element.Key! })
                                                 await s3.send(
                                                     new DeleteObjectsCommand({
@@ -660,8 +660,8 @@ process.on('SIGTERM', async () => {
                 })
             )
             let sagjerk: { Key: string }[] = []
-            if (data.Contents!.length != 0) {
-                for (const element of data.Contents!)
+            if (data.Contents && data.Contents.length != 0) {
+                for (const element of data.Contents)
                     sagjerk.push({ Key: element.Key! })
                 await s3.send(
                     new DeleteObjectsCommand({
@@ -694,8 +694,8 @@ process.on('SIGINT', async () => {
                 })
             )
             let sagjerk: { Key: string }[] = []
-            if (data.Contents!.length != 0) {
-                for (const element of data.Contents!)
+            if (data.Contents && data.Contents.length != 0) {
+                for (const element of data.Contents)
                     sagjerk.push({ Key: element.Key! })
                 await s3.send(
                     new DeleteObjectsCommand({
