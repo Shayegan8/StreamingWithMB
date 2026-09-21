@@ -27,6 +27,53 @@ const s3 = new S3Client({
     }
 })
 
+const justForDelete = new S3Client({
+    region: config.zone,
+    endpoint: config.endpointUrl,
+    credentials: {
+        accessKeyId: config.accessKey,
+        secretAccessKey: config.secretKey,
+    },
+    requestHandler: {
+        httpsAgent: new https.Agent({
+            keepAlive: true,
+            keepAliveMsecs: 5000,
+            maxSockets: 128,
+            maxFreeSockets: 32,
+            timeout: 30000,
+        })
+    }
+})
+
+let toDelete: string[] = []
+if (mode == "s3")
+    setInterval(async () => {
+        const toDeleteCopy = toDelete
+        if (toDeleteCopy.length != 0)
+            for (const connectionID of toDelete) {
+                const data2 = await justForDelete.send(new ListObjectsV2Command({
+                    Bucket: bucketName,
+                    Prefix: `appserver,${connectionID}/`,
+                }))
+
+                const sagjerk2: { Key: string }[] = []
+                if (data2.Contents && data2.Contents.length != 0) {
+                    for (const element of data2.Contents)
+                        sagjerk2.push({ Key: element.Key! })
+                    await justForDelete.send(
+                        new DeleteObjectsCommand({
+                            Bucket: bucketName,
+                            Delete: {
+                                Objects: sagjerk2,
+                            },
+                        })
+                    )
+                }
+
+            }
+    }, 120000)
+
+
 const bucketName = config.bucket
 
 let conn: Redis | null
@@ -378,27 +425,12 @@ const server = net.createServer((socket) => {
                                             ACL: 'private',
                                             Body: Buffer.concat([iv, tag, encryptedMsg]),
                                         }))
-                                        const data2 = await s31!.send(new ListObjectsV2Command({
-                                            Bucket: bucketName,
-                                            Prefix: `appserver,${connectionID}/`,
-                                        }))
 
-                                        const sagjerk2: { Key: string }[] = []
-                                        if (data2.Contents && data2.Contents.length != 0) {
-                                            for (const element of data2.Contents)
-                                                sagjerk2.push({ Key: element.Key! })
-                                            await s31!.send(
-                                                new DeleteObjectsCommand({
-                                                    Bucket: bucketName,
-                                                    Delete: {
-                                                        Objects: sagjerk2,
-                                                    },
-                                                })
-                                            )
-                                        }
+                                        toDelete.push(connectionID)
                                         s31!.destroy()
                                         logger("So as this one?")
                                     } catch (e) {
+                                        toDelete.push(connectionID)
                                         s31!.destroy()
                                         logger("Kose nanat " + e, "error")
                                     }
@@ -475,27 +507,11 @@ const server = net.createServer((socket) => {
                                                     ACL: 'private',
                                                     Body: Buffer.concat([iv, tag, encryptedMsg]),
                                                 }))
-                                                const data2 = await s31!.send(new ListObjectsV2Command({
-                                                    Bucket: bucketName,
-                                                    Prefix: `appserver,${connectionID}/`,
-                                                }))
-
-                                                const sagjerk2: { Key: string }[] = []
-                                                if (data2.Contents && data2.Contents.length != 0) {
-                                                    for (const element of data2.Contents)
-                                                        sagjerk2.push({ Key: element.Key! })
-                                                    await s31!.send(
-                                                        new DeleteObjectsCommand({
-                                                            Bucket: bucketName,
-                                                            Delete: {
-                                                                Objects: sagjerk2,
-                                                            },
-                                                        })
-                                                    )
-                                                }
+                                                toDelete.push(connectionID)
                                                 s31!.destroy()
                                                 logger("So as this one?")
                                             } catch (e) {
+                                                toDelete.push(connectionID)
                                                 s31!.destroy()
                                                 logger("dadwadda " + e, "error")
                                             }
@@ -570,27 +586,11 @@ const server = net.createServer((socket) => {
                                                     Body: Buffer.concat([iv, tag, encryptedMsg]),
                                                 }))
 
-                                                const data2 = await s31!.send(new ListObjectsV2Command({
-                                                    Bucket: bucketName,
-                                                    Prefix: `appserver,${connectionID}/`,
-                                                }))
-
-                                                const sagjerk2: { Key: string }[] = []
-                                                if (data2.Contents && data2.Contents.length != 0) {
-                                                    for (const element of data2.Contents)
-                                                        sagjerk2.push({ Key: element.Key! })
-                                                    await s31!.send(
-                                                        new DeleteObjectsCommand({
-                                                            Bucket: bucketName,
-                                                            Delete: {
-                                                                Objects: sagjerk2,
-                                                            },
-                                                        })
-                                                    )
-                                                }
+                                                toDelete.push(connectionID)
                                                 s31!.destroy()
                                                 logger("So as this one?")
                                             } catch (e) {
+                                                toDelete.push(connectionID)
                                                 s31!.destroy()
                                                 logger("dwpdpadppdawda? " + e, "error")
                                             }
@@ -632,27 +632,11 @@ const server = net.createServer((socket) => {
                                                     Body: Buffer.concat([iv, tag, encryptedMsg]),
                                                 }))
 
-                                                const data2 = await s31!.send(new ListObjectsV2Command({
-                                                    Bucket: bucketName,
-                                                    Prefix: `appserver,${connectionID}/`,
-                                                }))
-
-                                                const sagjerk2: { Key: string }[] = []
-                                                if (data2.Contents && data2.Contents.length != 0) {
-                                                    for (const element of data2.Contents)
-                                                        sagjerk2.push({ Key: element.Key! })
-                                                    await s31!.send(
-                                                        new DeleteObjectsCommand({
-                                                            Bucket: bucketName,
-                                                            Delete: {
-                                                                Objects: sagjerk2,
-                                                            },
-                                                        })
-                                                    )
-                                                }
+                                                toDelete.push(connectionID)
                                                 s31!.destroy()
                                                 logger("So as this one?")
                                             } catch (e) {
+                                                toDelete.push(connectionID)
                                                 s31!.destroy()
                                                 logger("dawdwadawd ah " + e, "error")
                                             }

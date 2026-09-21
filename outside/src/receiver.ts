@@ -4,7 +4,7 @@ import { Redis } from 'ioredis'
 import { exit } from 'process'
 import PQueue from 'p-queue'
 import crypto from 'node:crypto'
-import { DeleteObjectsCommand, GetObjectCommand, ListObjectsCommand, ListObjectsV2Command, PutObjectCommand, S3, S3Client } from '@aws-sdk/client-s3'
+import { DeleteObjectsCommand, GetObjectCommand, ListObjectsCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import https from 'https'
 
 import config from "../config.json" with {type: 'json'}
@@ -12,6 +12,52 @@ import config from "../config.json" with {type: 'json'}
 const mode = config.mode
 
 let g = 0
+
+const justForDelete = new S3Client({
+    region: config.zone,
+    endpoint: config.endpointUrl,
+    credentials: {
+        accessKeyId: config.accessKey,
+        secretAccessKey: config.secretKey,
+    },
+    requestHandler: {
+        httpsAgent: new https.Agent({
+            keepAlive: true,
+            keepAliveMsecs: 5000,
+            maxSockets: 128,
+            maxFreeSockets: 32,
+            timeout: 30000,
+        })
+    }
+})
+
+let toDelete: string[] = []
+if (mode == "s3")
+    setInterval(async () => {
+        const toDeleteCopy = toDelete
+        if (toDeleteCopy.length != 0)
+            for (const connectionID of toDelete) {
+                const data2 = await justForDelete.send(new ListObjectsV2Command({
+                    Bucket: bucketName,
+                    Prefix: `proxy,${connectionID}/`,
+                }))
+
+                const sagjerk2: { Key: string }[] = []
+                if (data2.Contents && data2.Contents.length != 0) {
+                    for (const element of data2.Contents)
+                        sagjerk2.push({ Key: element.Key! })
+                    await justForDelete.send(
+                        new DeleteObjectsCommand({
+                            Bucket: bucketName,
+                            Delete: {
+                                Objects: sagjerk2,
+                            },
+                        })
+                    )
+                }
+
+            }
+    }, 120000)
 
 let s3list: S3Client[] = []
 if (mode == "s3")
@@ -152,32 +198,9 @@ async function popperBuffer2(key: string, connectionID: string, s3Client: S3Clie
             if (sockets.get(connectionID)?.abort) {
                 logger("Freeing memory")
                 sockets.delete(connectionID)
-                try {
-                    const data2 = await s3Client.send(new ListObjectsV2Command({
-                        Bucket: bucketName,
-                        Prefix: `proxy,${connectionID}/`,
-                    }))
-
-                    const sagjerk2: { Key: string }[] = []
-                    if (data2.Contents && data2.Contents.length != 0) {
-                        for (const element of data2.Contents)
-                            sagjerk2.push({ Key: element.Key! })
-                        await s3Client.send(
-                            new DeleteObjectsCommand({
-                                Bucket: bucketName,
-                                Delete: {
-                                    Objects: sagjerk2,
-                                },
-                            })
-                        )
-                    }
-                    s3Client.destroy()
-                    break
-                } catch (e) {
-                    s3Client.destroy()
-                    logger("Problem with fucking appserver chunks " + e, "error")
-                    break
-                }
+                toDelete.push(connectionID)
+                s3Client.destroy()
+                break
             }
             logger("Im getting this mother fucker so bad")
             const data = await s3Client.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
@@ -297,30 +320,8 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         blconn1!.quit().catch(() => { })
                         ackconn!.quit().catch(() => { })
                     } else {
-                        try {
-                            const data2 = await s31!.send(new ListObjectsV2Command({
-                                Bucket: bucketName,
-                                Prefix: `proxy,${connectionID}/`,
-                            }))
-
-                            const sagjerk2: { Key: string }[] = []
-                            if (data2.Contents && data2.Contents.length != 0) {
-                                for (const element of data2.Contents)
-                                    sagjerk2.push({ Key: element.Key! })
-                                await s31!.send(
-                                    new DeleteObjectsCommand({
-                                        Bucket: bucketName,
-                                        Delete: {
-                                            Objects: sagjerk2,
-                                        },
-                                    })
-                                )
-                            }
-                            s31!.destroy()
-                        } catch (e) {
-                            s31!.destroy()
-                            logger("Problem with fucking appserver chunks " + e, "error")
-                        }
+                        toDelete.push(connectionID)
+                        s31!.destroy()
                     }
                     break
                 }
@@ -348,30 +349,8 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         blconn1!.quit().catch(() => { })
                         ackconn!.quit().catch(() => { })
                     } else {
-                        try {
-                            const data2 = await s31!.send(new ListObjectsV2Command({
-                                Bucket: bucketName,
-                                Prefix: `proxy,${connectionID}/`,
-                            }))
-
-                            const sagjerk2: { Key: string }[] = []
-                            if (data2.Contents && data2.Contents.length != 0) {
-                                for (const element of data2.Contents)
-                                    sagjerk2.push({ Key: element.Key! })
-                                await s31!.send(
-                                    new DeleteObjectsCommand({
-                                        Bucket: bucketName,
-                                        Delete: {
-                                            Objects: sagjerk2,
-                                        },
-                                    })
-                                )
-                            }
-                            s31!.destroy()
-                        } catch (e) {
-                            s31!.destroy()
-                            logger("Problem with fucking appserver chunks " + e, "error")
-                        }
+                        toDelete.push(connectionID)
+                        s31!.destroy()
                     }
                     break
                 }
@@ -392,30 +371,8 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         blconn1!.quit().catch(() => { })
                         ackconn!.quit().catch(() => { })
                     } else {
-                        try {
-                            const data2 = await s31!.send(new ListObjectsV2Command({
-                                Bucket: bucketName,
-                                Prefix: `proxy,${connectionID}/`,
-                            }))
-
-                            const sagjerk2: { Key: string }[] = []
-                            if (data2.Contents && data2.Contents.length != 0) {
-                                for (const element of data2.Contents)
-                                    sagjerk2.push({ Key: element.Key! })
-                                await s31!.send(
-                                    new DeleteObjectsCommand({
-                                        Bucket: bucketName,
-                                        Delete: {
-                                            Objects: sagjerk2,
-                                        },
-                                    })
-                                )
-                            }
-                            s31!.destroy()
-                        } catch (e) {
-                            s31!.destroy()
-                            logger("Problem with fucking appserver chunks " + e, "error")
-                        }
+                        toDelete.push(connectionID)
+                        s31!.destroy()
                     }
                     break
                 }
@@ -463,28 +420,12 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                                 })).catch((reason) => {
                                     logger(`Problem with pushing appserver end ${reason}`, "error")
                                 })
-                                const data2 = await s31!.send(new ListObjectsV2Command({
-                                    Bucket: bucketName,
-                                    Prefix: `proxy,${connectionID}/`,
-                                }))
-
-                                const sagjerk2: { Key: string }[] = []
-                                if (data2.Contents && data2.Contents.length != 0) {
-                                    for (const element of data2.Contents)
-                                        sagjerk2.push({ Key: element.Key! })
-                                    await s31!.send(
-                                        new DeleteObjectsCommand({
-                                            Bucket: bucketName,
-                                            Delete: {
-                                                Objects: sagjerk2,
-                                            },
-                                        })
-                                    )
-                                }
+                                toDelete.push(connectionID)
                                 s31!.destroy()
                                 logger("Ok it seems i really change the version now!")
                                 logger("The version is now " + outSeq)
                             } catch (e) {
+                                toDelete.push(connectionID)
                                 s31!.destroy()
                                 logger("Problemw ith adwdadwa " + e, "error")
                             }
