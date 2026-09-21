@@ -41,9 +41,8 @@ const s3g = new S3Client({
         httpsAgent: new https.Agent({
             keepAlive: true,
             keepAliveMsecs: 30_000,
-            maxSockets: 2048,        // <-- raise this
+            maxSockets: 2048,
             maxFreeSockets: 256,
-            scheduling: 'lifo',
             timeout: 60_000,
         })
     },
@@ -82,7 +81,7 @@ if (mode == "s3")
             }
             toDelete = []
         }
-    }, 120000)
+    }, 10000)
 
 const bucketName = config.bucket
 
@@ -185,6 +184,7 @@ async function popperBuffer2(key: string, connectionID: string) {
             }
             logger("Im getting this mother fucker so bad")
             const data = await s3g.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
+            toDelete.push(connectionID)
             logger(`It took me ${Date.now() - dangoz}ms to actually receive this`)
             logger("Fucked?")
             return await data.Body!.transformToByteArray()
@@ -553,31 +553,33 @@ setImmediate(async () => {
                         Prefix: "informs/",
                     }))
 
-                    let sagjerk: { Key: string }[] = []
+                    setImmediate(async () => {
+                        let sagjerk: { Key: string }[] = []
 
-                    if (data.Contents && data.Contents.length != 0)
-                        for (const element of data.Contents) {
-                            logger("Name of that " + element.Key)
-                            sagjerk.push({ Key: element.Key! })
-                            try {
-                                const daljerk = await s3g.send(new GetObjectCommand({
-                                    Bucket: bucketName, Key: element.Key
-                                }))
+                        if (data.Contents && data.Contents.length != 0)
+                            for (const element of data.Contents) {
+                                logger("Name of that " + element.Key)
+                                sagjerk.push({ Key: element.Key! })
+                                try {
+                                    const daljerk = await s3g.send(new GetObjectCommand({
+                                        Bucket: bucketName, Key: element.Key
+                                    }))
 
-                                logger("OK so now this means we really have the shit out of it")
-                                callback(await daljerk.Body!.transformToByteArray())
-                            } catch (e) {
-                                logger("Bad batch " + e)
+                                    logger("OK so now this means we really have the shit out of it")
+                                    callback(await daljerk.Body!.transformToByteArray())
+                                } catch (e) {
+                                    logger("Bad batch " + e)
+                                }
                             }
-                        }
-                    await s3g.send(
-                        new DeleteObjectsCommand({
-                            Bucket: bucketName,
-                            Delete: {
-                                Objects: sagjerk,
-                            },
-                        })
-                    )
+                        await s3g.send(
+                            new DeleteObjectsCommand({
+                                Bucket: bucketName,
+                                Delete: {
+                                    Objects: sagjerk,
+                                },
+                            })
+                        )
+                    })
                 } catch (e) {
                     logger("Bad delete " + e)
                 }

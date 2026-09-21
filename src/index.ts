@@ -39,9 +39,8 @@ const s3g = new S3Client({
         httpsAgent: new https.Agent({
             keepAlive: true,
             keepAliveMsecs: 30_000,
-            maxSockets: 2048,        // <-- raise this
+            maxSockets: 2048,
             maxFreeSockets: 256,
-            scheduling: 'lifo',
             timeout: 60_000,
         })
     },
@@ -79,7 +78,7 @@ if (mode == "s3")
             }
             toDelete = []
         }
-    }, 120000)
+    }, 10000)
 
 const bucketName = config.bucket
 
@@ -126,23 +125,16 @@ function logger(param: string, type?: string) {
         : (type == "error" ? `[\x1b[31mERR\x1b[0m] [\x1b[32m${mode}\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}` : param))
 }
 
-const connlist = new Map<string, any>()
-
 const symmetricKey = Buffer.from(config.symmetricKey, "hex")
 
-const popperBuffer = async (key: string, abrt: AbortController) => {
+const popperBuffer = async (key: string, connectionID: string, abrt: AbortController) => {
     let delay = 20
     for (let i = 0; i < 200; i++) {
         try {
             if (abrt.signal.aborted)
                 break
             const data = await s3g.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
-            await s3g.send(
-                new DeleteObjectCommand({
-                    Bucket: bucketName,
-                    Key: key,
-                })
-            )
+            toDelete.push(connectionID)
             logger("Seems like we actually got the buffer")
             return await data.Body!.transformToByteArray()
         } catch (e) {
@@ -229,11 +221,9 @@ const server = net.createServer((socket) => {
                                 clearTimeout(timejerk)
                             pqueue.add(() => {
                                 buff.push(data)
-                                connlist.set(connectionID, {})
                             })
                             timejerk = setTimeout(async () => {
                                 pqueue.add(async () => {
-                                    connlist.set(connectionID, true)
                                     logger(`Pushing batch to proxy,${connectionID}`, "info")
                                     let msg: Buffer<ArrayBuffer> | null
                                     let newVersion: Buffer
@@ -373,7 +363,6 @@ const server = net.createServer((socket) => {
                                     conn!.del(`appserver,${connectionID}`)
                                     await conn!.del(`proxy,${connectionID}`)
                                     socket.end()
-                                    connlist.delete(connectionID)
                                 }
                             }, 10000)
 
@@ -386,7 +375,6 @@ const server = net.createServer((socket) => {
                             clearImmediate(imedo)
                             if (blconn)
                                 blconn.quit().catch(() => { })
-                            connlist.delete(connectionID)
                         })
 
                         socket.on('end', async () => {
@@ -434,7 +422,6 @@ const server = net.createServer((socket) => {
                                 ctl.abort()
                                 if (blconn)
                                     blconn.quit().catch(() => { })
-                                connlist.delete(connectionID)
                             })
                         })
 
@@ -447,7 +434,6 @@ const server = net.createServer((socket) => {
                                 conn!.del(`ack,${connectionID}`)
                                 conn!.del(`appserver,${connectionID}`)
                                 conn!.del(`proxy,${connectionID}`)
-                                connlist.delete(connectionID)
                                 blconn!.disconnect(false)
                                 socket.end()
                             })
@@ -461,7 +447,7 @@ const server = net.createServer((socket) => {
                                         response = (await blconn.brpopBuffer(`appserver,${connectionID}`, 20))?.[1]
                                     else {
                                         logger(`appserver,${connectionID}/${outSeq}`)
-                                        response = await popperBuffer(`appserver,${connectionID}/${outSeq}`, ctl)
+                                        response = await popperBuffer(`appserver,${connectionID}/${outSeq}`, connectionID, ctl)
                                     }
                                     if (!response) {
                                         logger(`server chunk for ${connectionID} is null`, "info")
@@ -473,7 +459,6 @@ const server = net.createServer((socket) => {
                                         if (blconn)
                                             blconn.quit().catch(() => { })
                                         socket.end()
-                                        connlist.delete(connectionID)
                                         const msg = Buffer.from('end', 'binary')
                                         const iv = crypto.randomBytes(12)
                                         const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
@@ -550,7 +535,6 @@ const server = net.createServer((socket) => {
                                         if (blconn)
                                             blconn.quit().catch(() => { })
                                         socket.end()
-                                        connlist.delete(connectionID)
                                         const msg = Buffer.from('end', 'binary')
                                         const iv = crypto.randomBytes(12)
                                         const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
@@ -634,7 +618,6 @@ const server = net.createServer((socket) => {
                                     if (inatervo)
                                         clearInterval(inatervo)
                                     clearImmediate(imedo)
-                                    connlist.delete(connectionID)
                                     socket.end()
                                     break
                                 }
