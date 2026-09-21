@@ -111,20 +111,19 @@ function logger(param: string, type?: string) {
 }
 
 async function popperBuffer2(key: string) {
-    try {
-        const data = await s3.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
-        await s3.send(
-            new DeleteObjectCommand({
-                Bucket: bucketName,
-                Key: key,
-            })
-        )
-        logger("Fucked?")
-        return await data.Body!.transformToByteArray()
-    } catch (e) {
-        return await popperBuffer2(key)
+    for (let i = 0; i < 200; i++) {
+        try {
+            const data = await s3.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
+            await s3.send(new DeleteObjectCommand({ Bucket: bucketName, Key: key }))
+            logger("Fucked?")
+            return await data.Body!.transformToByteArray()
+        } catch {
+            await new Promise(r => setTimeout(r, 100))
+        }
     }
+    throw new Error("timed out waiting for " + key)
 }
+
 
 const callback = (payload: Uint8Array<ArrayBufferLike>) => {
     const extractIv = payload.subarray(0, 12)
@@ -192,7 +191,8 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 }, 10000)
 
             let ack = 0
-            let seq = "0"
+            let inSeq = "0"
+            let outSeq = "0"
             let seqChanged = true
             while (mode == "s3" ? await new Promise<Boolean>((resolve) => {
                 const ass = setInterval(() => {
@@ -207,16 +207,23 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 if (mode != "s3")
                     request = (await blconn1!.brpopBuffer(`proxy,${connectionID}`, 0))?.[1]
                 else {
-                    logger(`proxy,${connectionID}/${seq}`)
-                    request = await popperBuffer2(`proxy,${connectionID}/${seq}`)
+                    logger(`proxy,${connectionID}/${inSeq}`)
+                    request = await popperBuffer2(`proxy,${connectionID}/${inSeq}`)
                 }
+                logger("After match, the version being used " + inSeq)
                 const extractIv = request!.subarray(0, 12)
                 const tag = request!.subarray(12, 28)
                 const encryptedChunk = request!.subarray(28)
                 const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
                 decipher.setAuthTag(tag)
                 const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
-
+                let realMsg: Buffer<ArrayBuffer>
+                if (mode == "s3") {
+                    const newVersion = decryptedChunk.subarray(0, 10)
+                    inSeq = newVersion.toString('hex')
+                    realMsg = decryptedChunk.subarray(10)
+                }
+                logger("The version now we want after " + inSeq)
                 if (!Buffer.from('end', 'binary').compare(decryptedChunk)) {
                     sockets.delete(connectionID)
                     if (mode != "s3") {
@@ -288,16 +295,16 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                             logger("Ok before of this portion!")
                             await s3.send(new PutObjectCommand({
                                 Bucket: bucketName,
-                                Key: `appserver,${connectionID}/${seq}`,
+                                Key: `appserver,${connectionID}/${outSeq}`,
                                 ACL: 'private',
                                 Body: Buffer.concat([iv, tag, encryptedMsg]),
                             })).catch((reason) => {
                                 logger(`Problem with pushing appserver end ${reason}`, "error")
                             })
                             logger("Ok it seems i really change the version now!")
-                            seq = newVersion!.toString('hex')
+                            outSeq = newVersion!.toString('hex')
                             seqChanged = true
-                            logger("The version is now " + seq)
+                            logger("The version is now " + outSeq)
                         }
                         if (mode != "s3") {
                             clearInterval(pinger!)
@@ -336,7 +343,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         break
                     }
 
-                    sockets.get(connectionID)?.write(decryptedChunk)
+                    sockets.get(connectionID)?.write(mode == "s3" ? realMsg! : decryptedChunk)
                     let buffass: Buffer[] = []
                     let timeout: NodeJS.Timeout
                     let pqueue = new PQueue({ concurrency: 1 })
@@ -375,13 +382,13 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                                         logger("Ok we send appserver chunk")
                                         await s3.send(new PutObjectCommand({
                                             Bucket: bucketName,
-                                            Key: `appserver,${connectionID}/${seq}`,
+                                            Key: `appserver,${connectionID}/${outSeq}`,
                                             ACL: 'private',
                                             Body: Buffer.concat([iv, tag, encryptedMsg]),
                                         })).catch((reason) => {
                                             logger(`Problem with pushing appserver batch ${reason}`, "error")
                                         })
-                                        seq = newVersion!.toString('hex')
+                                        outSeq = newVersion!.toString('hex')
                                         seqChanged = true
                                         logger("And it passed?")
                                     }
@@ -417,15 +424,15 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                                         logger("Sending appserver chunk in timeout")
                                         await s3.send(new PutObjectCommand({
                                             Bucket: bucketName,
-                                            Key: `appserver,${connectionID}/${seq}`,
+                                            Key: `appserver,${connectionID}/${outSeq}`,
                                             ACL: 'private',
                                             Body: Buffer.concat([iv, tag, encryptedMsg]),
                                         })).catch((reason) => {
                                             logger(`Problem with pushing appserver batch ${reason}`, "error")
                                         })
-                                        seq = newVersion!.toString('hex')
+                                        outSeq = newVersion!.toString('hex')
                                         seqChanged = true
-                                        logger("It passed so means the fucking version is now this " + seq)
+                                        logger("It passed so means the fucking version is now this " + outSeq)
                                     }
                                     buffass = []
                                     length = 0
@@ -443,7 +450,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         sockets.delete(connectionID)
                     })
                 } else
-                    sockets.get(connectionID)?.write(decryptedChunk)
+                    sockets.get(connectionID)?.write(mode == "s3" ? realMsg! : decryptedChunk)
             }
         } catch (e) {
         }
@@ -462,22 +469,22 @@ setImmediate(async () => {
                     Bucket: bucketName,
                     Prefix: "informs/",
                 }))
-                for (const element of data.Contents!) {
-                    logger("Name of that " + element.Key)
-                    await new Promise<void>((resolve) => setTimeout(resolve, 1000))
-                    const daljerk = await s3.send(new GetObjectCommand({
-                        Bucket: bucketName, Key: element.Key
-                    }))
+                if (data.Contents!.length != 0)
+                    for (const element of data.Contents!) {
+                        logger("Name of that " + element.Key)
+                        const daljerk = await s3.send(new GetObjectCommand({
+                            Bucket: bucketName, Key: element.Key
+                        }))
 
-                    await s3.send(
-                        new DeleteObjectCommand({
-                            Bucket: bucketName,
-                            Key: element.Key
-                        })
-                    )
-                    logger("OK so now this means we really have the shit out of it")
-                    callback(await daljerk.Body!.transformToByteArray())
-                }
+                        await s3.send(
+                            new DeleteObjectCommand({
+                                Bucket: bucketName,
+                                Key: element.Key
+                            })
+                        )
+                        logger("OK so now this means we really have the shit out of it")
+                        callback(await daljerk.Body!.transformToByteArray())
+                    }
                 // I send the client that you should remove the directory
             } catch (e) {
 

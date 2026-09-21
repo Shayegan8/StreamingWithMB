@@ -159,75 +159,97 @@ const server = net.createServer((socket) => {
                         }
                         let pqueue = new PQueue({ concurrency: 1 })
                         let buff: Buffer[] = []
+                        let timejerk: NodeJS.Timeout
                         socket.on('data', (data: Buffer) => {
+                            if (timejerk)
+                                clearTimeout(timejerk)
                             pqueue.add(() => {
                                 buff.push(data)
-                                length += data.length
                                 connlist.set(connectionID, {})
                             })
-                        })
+                            timejerk = setTimeout(async () => {
+                                pqueue.add(async () => {
+                                    connlist.set(connectionID, true)
+                                    logger(`Pushing batch to proxy,${connectionID}`, "info")
+                                    let msg: Buffer<ArrayBuffer> | null
+                                    let newVersion: Buffer
+                                    if (mode != "s3")
+                                        msg = Buffer.concat(buff)
+                                    else {
+                                        const concatious = Buffer.concat(buff)
+                                        const preMsg = Buffer.alloc(10 + concatious.length)
+                                        const jerk = crypto.randomBytes(10)
+                                        newVersion = jerk
+                                        jerk.copy(preMsg, 0, 0, 10)
+                                        concatious.copy(preMsg, 10, 0)
+                                        msg = preMsg
+                                    }
+                                    const iv = crypto.randomBytes(12)
+                                    const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
+                                    const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
+                                    const tag = cipher.getAuthTag()
+                                    if (conn)
+                                        await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                    else {
+                                        logger("So this is the old version " + `proxy,${connectionID}/${inSeq}`)
+                                        await new Promise<void>((resolve) => {
+                                            const iv = setInterval(() => {
+                                                if (inSeqUsedByOutseq) {
+                                                    inSeqUsedByOutseq = false
+                                                    clearInterval(iv)
+                                                    resolve()
+                                                }
+                                            }, 100)
+                                            setTimeout(() => {
+                                                clearInterval(iv)
+                                                resolve()
+                                            }, 10000)
+                                        })
 
-                        let length = 0
-                        let rtt = 0
-                        let max = 2 * 1024 * 1024
-                        let seq = "0"
-                        const pqueueMax = new PQueue({ concurrency: 1 })
-                        const interv = setInterval(async () => {
-                            pqueue.add(async () => {
-                                if (length != buff.length)
-                                    length = buff.length
-                                else {
-                                    if (buff.length != 0) {
-                                        length = 0
-                                        connlist.set(connectionID, true)
-                                        logger(`Pushing batch to proxy,${connectionID}`, "info")
-                                        const msg = Buffer.concat(buff)
-                                        const iv = crypto.randomBytes(12)
-                                        const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
-                                        const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
-                                        const tag = cipher.getAuthTag()
+                                        await s3.send(new PutObjectCommand({
+                                            Bucket: bucketName,
+                                            Key: `proxy,${connectionID}/${inSeq}`,
+                                            ACL: 'private',
+                                            Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                        })).catch((reason) => {
+                                            logger(`Problem with pushing batch after informing ${reason}`, "error")
+                                        })
+                                        inSeq = newVersion!.toString('hex')
+                                        logger("And this is the new version didnt got sent")
+                                    }
+                                    buff = []
+                                    sent = true
+                                    pqueueMax.add(async () => {
+                                        const msgACK = Buffer.from(`${max}`, 'binary')
+                                        const ivACK = crypto.randomBytes(12)
+                                        const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
+                                        const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
+                                        const tagACK = cipherACK.getAuthTag()
                                         if (conn)
-                                            await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                            await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
                                         else {
-                                            logger("Ok here! " + `proxy,${connectionID}/${seq}`)
+                                            logger("Ok we are sending rtt")
                                             await s3.send(new PutObjectCommand({
                                                 Bucket: bucketName,
-                                                Key: `proxy,${connectionID}/${seq}`,
+                                                Key: `ack,${connectionID}`,
                                                 ACL: 'private',
-                                                Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                                Body: Buffer.concat([ivACK, tagACK, encryptedMsgACK]),
                                             })).catch((reason) => {
-                                                logger(`Problem with pushing batch after informing ${reason}`, "error")
+                                                logger(`Problem with pushing ack after informing ${reason}`, "error")
                                             })
-                                            logger("Done?")
+                                            logger("Seems like sending rtt got passed? lol")
                                         }
-                                        buff = []
-                                        sent = true
-                                        pqueueMax.add(async () => {
-                                            const msgACK = Buffer.from(`${max}`, 'binary')
-                                            const ivACK = crypto.randomBytes(12)
-                                            const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
-                                            const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
-                                            const tagACK = cipherACK.getAuthTag()
-                                            if (conn)
-                                                await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
-                                            else {
-                                                logger("Ok we are sending rtt")
-                                                await s3.send(new PutObjectCommand({
-                                                    Bucket: bucketName,
-                                                    Key: `ack,${connectionID}`,
-                                                    ACL: 'private',
-                                                    Body: Buffer.concat([ivACK, tagACK, encryptedMsgACK]),
-                                                })).catch((reason) => {
-                                                    logger(`Problem with pushing ack after informing ${reason}`, "error")
-                                                })
-                                                logger("Seems like sending rtt got passed? lol")
-                                            }
-                                            rtt = Date.now()
-                                        })
-                                    }
-                                }
-                            })
-                        }, 100)
+                                        rtt = Date.now()
+                                    })
+                                })
+                            }, 100)
+                        })
+
+                        let rtt = 0
+                        let max = 2 * 1024 * 1024
+                        let inSeq = "0"
+                        let inSeqUsedByOutseq = false
+                        const pqueueMax = new PQueue({ concurrency: 1 })
                         let sent = false
                         const inatervo = setInterval(async () => {
                             if (!sent) {
@@ -293,7 +315,6 @@ const server = net.createServer((socket) => {
                                 } catch (e) {
                                     logger("pinger: " + e, "info")
                                     clearInterval(pinger!)
-                                    clearInterval(interv)
                                     clearInterval(inatervo)
                                     clearImmediate(imedo)
                                     conn!.del(`ack,${connectionID}`)
@@ -309,7 +330,6 @@ const server = net.createServer((socket) => {
                             if (pinger)
                                 clearInterval(pinger)
                             clearInterval(inatervo)
-                            clearInterval(interv)
                             clearImmediate(imedo)
                             if (blconn)
                                 blconn.quit().catch(() => { })
@@ -318,18 +338,7 @@ const server = net.createServer((socket) => {
 
                         socket.on('end', async () => {
                             logger(`Sending half close signal to proxy,${connectionID}`, "info")
-                            let msg: Buffer<ArrayBuffer> | null
-                            let newVersion: Buffer
-                            if (mode != "s3")
-                                msg = Buffer.from('end', 'binary')
-                            else {
-                                const preMsg = Buffer.alloc(13)
-                                const jerk = crypto.randomBytes(10)
-                                newVersion = jerk
-                                jerk.copy(preMsg, 0, 0, 10)
-                                preMsg.write('end', 10)
-                                msg = preMsg
-                            }
+                            const msg = Buffer.from('end', 'binary')
                             const iv = crypto.randomBytes(12)
                             const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
                             const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
@@ -350,7 +359,7 @@ const server = net.createServer((socket) => {
 
                                     await s3.send(new PutObjectCommand({
                                         Bucket: bucketName,
-                                        Key: `proxy,${connectionID}/${seq}`,
+                                        Key: `proxy,${connectionID}/${inSeq}`,
                                         ACL: 'private',
                                         Body: Buffer.concat([iv, tag, encryptedMsg]),
                                     }))
@@ -381,7 +390,6 @@ const server = net.createServer((socket) => {
                                 clearInterval(pinger)
                             clearInterval(inatervo)
                             clearImmediate(imedo)
-                            clearInterval(interv)
                             if (blconn)
                                 blconn.quit().catch(() => { })
                             connlist.delete(connectionID)
@@ -390,7 +398,6 @@ const server = net.createServer((socket) => {
                         if (mode != "s3")
                             blconn!.on('error', () => {
                                 logger("blconn error event: " + connectionID, "error")
-                                clearInterval(interv)
                                 clearInterval(pinger!)
                                 clearInterval(inatervo)
                                 clearImmediate(imedo)
@@ -402,6 +409,7 @@ const server = net.createServer((socket) => {
                                 socket.end()
                             })
 
+                        let outSeq = "0"
                         const imedo = setImmediate(async () => {
                             while (true) {
                                 try {
@@ -409,9 +417,10 @@ const server = net.createServer((socket) => {
                                     if (blconn)
                                         response = (await blconn.brpopBuffer(`appserver,${connectionID}`, 0))?.[1]
                                     else {
-                                        logger(`appserver,${connectionID}/${seq}`)
-                                        response = await popperBuffer(`appserver,${connectionID}/${seq}`)
+                                        logger(`appserver,${connectionID}/${outSeq}`)
+                                        response = await popperBuffer(`appserver,${connectionID}/${outSeq}`)
                                     }
+                                    inSeqUsedByOutseq = true
                                     sent = false
                                     pqueueMax.add(() => {
                                         const meseaured = Date.now() - rtt
@@ -435,7 +444,7 @@ const server = net.createServer((socket) => {
                                     if (mode == "s3") {
                                         version = decryptedChunk.subarray(0, 10).toString('hex')
                                         logger("THIS IS THE VERSSSSIOOON " + version)
-                                        seq = version
+                                        outSeq = version
                                         const realMsg = decryptedChunk.subarray(10)
                                         decryptedChunk = realMsg
                                     }
@@ -444,7 +453,6 @@ const server = net.createServer((socket) => {
                                         if (pinger)
                                             clearInterval(pinger)
                                         clearInterval(inatervo)
-                                        clearInterval(interv)
                                         clearImmediate(imedo)
                                         if (blconn)
                                             blconn.quit().catch(() => { })
@@ -465,7 +473,7 @@ const server = net.createServer((socket) => {
 
                                                 await s3.send(new PutObjectCommand({
                                                     Bucket: bucketName,
-                                                    Key: `proxy,${connectionID}/${seq}`,
+                                                    Key: `proxy,${connectionID}/${inSeq}`,
                                                     ACL: 'private',
                                                     Body: Buffer.concat([iv, tag, encryptedMsg]),
                                                 }))
@@ -501,7 +509,6 @@ const server = net.createServer((socket) => {
                                         clearInterval(pinger!)
                                     clearInterval(inatervo)
                                     clearImmediate(imedo)
-                                    clearInterval(interv)
                                     connlist.delete(connectionID)
                                     conn!.del(`ack,${connectionID}`)
                                     conn!.del(`proxy,${connectionID}`)
