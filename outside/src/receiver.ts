@@ -171,9 +171,11 @@ async function popperBuffer2(key: string, connectionID: string, s3Client: S3Clie
                         )
                     }
                     s3Client.destroy()
+                    break
                 } catch (e) {
                     s3Client.destroy()
                     logger("Problem with fucking appserver chunks " + e, "error")
+                    break
                 }
             }
             logger("Im getting this mother fucker so bad")
