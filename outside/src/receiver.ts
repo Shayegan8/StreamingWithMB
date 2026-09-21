@@ -262,7 +262,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                     }
                 }, 10000)
 
-            let ack = 0
+            let ack = 2 * 1024 * 1024
             let inSeq = "0"
             let outSeq = "0"
             let seqChanged = true
@@ -375,10 +375,10 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 let buffered: Uint8Array<ArrayBufferLike> | undefined
                 if (mode != "s3") {
                     buffered = (await ackconn!.brpopBuffer(`ack,${connectionID}`, 0))?.[1]
-                } else {
+                } else if (config.ackS3) {
                     buffered = await popperBuffer2(`ack,${connectionID}`, connectionID, s31!)
                 }
-                if (!buffered) {
+                if (!buffered && config.ackS3) {
                     logger("Buffered issue")
                     sockets.get(connectionID)?.socket?.end()
                     sockets.delete(connectionID)
@@ -416,14 +416,15 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                     break
                 }
 
-                const extractIvACK = buffered!.subarray(0, 12)
-                const tagACK = buffered!.subarray(12, 28)
-                const encryptedChunkACK = buffered!.subarray(28)
-                const decipherACK = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIvACK)
-                decipherACK.setAuthTag(tagACK)
-                const decryptedChunkACK = Buffer.concat([decipherACK.update(encryptedChunkACK), decipherACK.final()])
-                ack = parseInt(decryptedChunkACK.toString('utf8'))
-
+                if (config.ackS3 || mode != "s3") {
+                    const extractIvACK = buffered!.subarray(0, 12)
+                    const tagACK = buffered!.subarray(12, 28)
+                    const encryptedChunkACK = buffered!.subarray(28)
+                    const decipherACK = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIvACK)
+                    decipherACK.setAuthTag(tagACK)
+                    const decryptedChunkACK = Buffer.concat([decipherACK.update(encryptedChunkACK), decipherACK.final()])
+                    ack = parseInt(decryptedChunkACK.toString('utf8'))
+                }
                 if (!sockets.has(connectionID)) {
                     let fastestWorkingIP: string | null
                     if (atyp === "3")

@@ -250,27 +250,28 @@ const server = net.createServer((socket) => {
                                     }
                                     buff = []
                                     sent = true
-                                    pqueueMax.add(async () => {
-                                        const msgACK = Buffer.from(`${max}`, 'binary')
-                                        const ivACK = crypto.randomBytes(12)
-                                        const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
-                                        const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
-                                        const tagACK = cipherACK.getAuthTag()
-                                        if (conn) {
-                                            rtt = Date.now()
-                                            await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
-                                        } else {
-                                            logger("Ok we are sending rtt")
-                                            await s31!.send(new PutObjectCommand({
-                                                Bucket: bucketName,
-                                                Key: `ack,${connectionID}`,
-                                                ACL: 'private',
-                                                Body: Buffer.concat([ivACK, tagACK, encryptedMsgACK]),
-                                            })).catch((reason) => {
-                                                logger(`Problem with pushing ack after informing ${reason}`, "error")
-                                            })
-                                        }
-                                    })
+                                    if (config.ackS3 || mode != "s3")
+                                        pqueueMax.add(async () => {
+                                            const msgACK = Buffer.from(`${max}`, 'binary')
+                                            const ivACK = crypto.randomBytes(12)
+                                            const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
+                                            const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
+                                            const tagACK = cipherACK.getAuthTag()
+                                            if (conn) {
+                                                rtt = Date.now()
+                                                await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
+                                            } else {
+                                                logger("Ok we are sending rtt")
+                                                await s31!.send(new PutObjectCommand({
+                                                    Bucket: bucketName,
+                                                    Key: `ack,${connectionID}`,
+                                                    ACL: 'private',
+                                                    Body: Buffer.concat([ivACK, tagACK, encryptedMsgACK]),
+                                                })).catch((reason) => {
+                                                    logger(`Problem with pushing ack after informing ${reason}`, "error")
+                                                })
+                                            }
+                                        })
                                 })
                             }, 100)
                         })
@@ -281,34 +282,36 @@ const server = net.createServer((socket) => {
                         let inSeqUsedByOutseq = false
                         const pqueueMax = new PQueue({ concurrency: 1 })
                         let sent = false
-                        const inatervo = setInterval(async () => {
-                            if (!sent) {
-                                sent = true
-                                rtt = Date.now()
-                                pqueueMax.add(async () => {
-                                    const msgACK = Buffer.from(`${max}`, 'binary')
-                                    const ivACK = crypto.randomBytes(12)
-                                    const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
-                                    const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
-                                    const tagACK = cipherACK.getAuthTag()
-                                    if (conn)
-                                        await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
-                                    else {
-                                        logger("Ok we are sending rtt in interval")
-                                        await s31!.send(new PutObjectCommand({
-                                            Bucket: bucketName,
-                                            Key: `ack,${connectionID}`,
-                                            ACL: 'private',
-                                            Body: Buffer.concat([ivACK, tagACK, encryptedMsgACK]),
-                                        })).catch((reason) => {
-                                            logger(`Problem with pushing ack after informing ${reason}`, "error")
-                                        })
-                                        logger("This passed again?")
-                                    }
-                                })
-                            }
-                        }, 100)
-
+                        let inatervo: NodeJS.Timeout | null
+                        if (config.ackS3 || mode != "s3") {
+                            inatervo = setInterval(async () => {
+                                if (!sent) {
+                                    sent = true
+                                    rtt = Date.now()
+                                    pqueueMax.add(async () => {
+                                        const msgACK = Buffer.from(`${max}`, 'binary')
+                                        const ivACK = crypto.randomBytes(12)
+                                        const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
+                                        const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
+                                        const tagACK = cipherACK.getAuthTag()
+                                        if (conn)
+                                            await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
+                                        else {
+                                            logger("Ok we are sending rtt in interval")
+                                            await s31!.send(new PutObjectCommand({
+                                                Bucket: bucketName,
+                                                Key: `ack,${connectionID}`,
+                                                ACL: 'private',
+                                                Body: Buffer.concat([ivACK, tagACK, encryptedMsgACK]),
+                                            })).catch((reason) => {
+                                                logger(`Problem with pushing ack after informing ${reason}`, "error")
+                                            })
+                                            logger("This passed again?")
+                                        }
+                                    })
+                                }
+                            }, 100)
+                        }
                         const server_reply = Buffer.alloc(10)
                         server_reply[0] = 0x05 // VER
                         server_reply[1] = 0x00 // REP
@@ -345,7 +348,7 @@ const server = net.createServer((socket) => {
                                 } catch (e) {
                                     logger("pinger: " + e, "info")
                                     clearInterval(pinger!)
-                                    clearInterval(inatervo)
+                                    clearInterval(inatervo!)
                                     clearImmediate(imedo)
                                     conn!.del(`ack,${connectionID}`)
                                     conn!.del(`appserver,${connectionID}`)
@@ -359,7 +362,8 @@ const server = net.createServer((socket) => {
                             logger(`Client error: ${e}`, "error")
                             if (pinger)
                                 clearInterval(pinger)
-                            clearInterval(inatervo)
+                            if (inatervo)
+                                clearInterval(inatervo)
                             clearImmediate(imedo)
                             if (blconn)
                                 blconn.quit().catch(() => { })
@@ -421,7 +425,8 @@ const server = net.createServer((socket) => {
                                 }
                                 if (pinger)
                                     clearInterval(pinger)
-                                clearInterval(inatervo)
+                                if (inatervo)
+                                    clearInterval(inatervo)
                                 clearImmediate(imedo)
                                 if (blconn)
                                     blconn.quit().catch(() => { })
@@ -433,7 +438,7 @@ const server = net.createServer((socket) => {
                             blconn!.on('error', () => {
                                 logger("blconn error event: " + connectionID, "error")
                                 clearInterval(pinger!)
-                                clearInterval(inatervo)
+                                clearInterval(inatervo!)
                                 clearImmediate(imedo)
                                 conn!.del(`ack,${connectionID}`)
                                 conn!.del(`appserver,${connectionID}`)
@@ -458,7 +463,8 @@ const server = net.createServer((socket) => {
                                         logger(`server chunk for ${connectionID} is null`, "info")
                                         if (pinger)
                                             clearInterval(pinger)
-                                        clearInterval(inatervo)
+                                        if (inatervo)
+                                            clearInterval(inatervo)
                                         clearImmediate(imedo)
                                         if (blconn)
                                             blconn.quit().catch(() => { })
@@ -519,17 +525,20 @@ const server = net.createServer((socket) => {
                                     }
                                     inSeqUsedByOutseq = true
                                     sent = false
-                                    pqueueMax.add(() => {
-                                        const meseaured = Date.now() - rtt
-                                        if (meseaured > 10000)
-                                            max = Math.max((max / 2), 256 * 1024)
-                                        else
-                                            if (max < (1024 * 1024 * 2))
-                                                max += (500 * 1024)
-                                        if (max > (2 * 1024 * 1024))
-                                            max = Math.max((max / 2), 256 * 1024)
-                                        logger(`RTT ${connectionID}:${String(Math.fround(meseaured / (1000))).slice(0, 5)}s for received packet with length of ${Math.fround(response!.length / (1024 * 1024))}mb`, "info")
-                                    })
+                                    if (config.ackS3 || mode != "s3")
+                                        pqueueMax.add(() => {
+                                            const meseaured = Date.now() - rtt
+                                            if (meseaured > 10000)
+                                                max = Math.max((max / 2), 256 * 1024)
+                                            else
+                                                if (max < (1024 * 1024 * 2))
+                                                    max += (500 * 1024)
+                                            if (max > (2 * 1024 * 1024))
+                                                max = Math.max((max / 2), 256 * 1024)
+                                            logger(`RTT ${connectionID}:${String(Math.fround(meseaured / (1000))).slice(0, 5)}s for received packet with length of ${Math.fround(response!.length / (1024 * 1024))}mb`, "info")
+                                        })
+
+                                    logger(`RTT ${connectionID}:${String(Math.fround((Date.now() - rtt) / (1000))).slice(0, 5)}s for received packet with length of ${Math.fround(response!.length / (1024 * 1024))}mb`, "info")
 
                                     const extractIv = response!.subarray(0, 12)
                                     const tag = response!.subarray(12, 28)
@@ -549,7 +558,8 @@ const server = net.createServer((socket) => {
                                         logger(`server chunk for ${connectionID} is null`, "info")
                                         if (pinger)
                                             clearInterval(pinger)
-                                        clearInterval(inatervo)
+                                        if (inatervo)
+                                            clearInterval(inatervo)
                                         clearImmediate(imedo)
                                         if (blconn)
                                             blconn.quit().catch(() => { })
@@ -669,7 +679,8 @@ const server = net.createServer((socket) => {
                                             }
                                         }
                                     }
-                                    clearInterval(inatervo)
+                                    if (inatervo)
+                                        clearInterval(inatervo)
                                     clearImmediate(imedo)
                                     connlist.delete(connectionID)
                                     socket.end()
