@@ -608,6 +608,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                             ackconn!.quit().catch(() => { })
                             sockets.delete(connectionID)
                         } else {
+                            seqChanged = true
                             sockets.set(connectionID, { socket: undefined, abort: true })
                         }
                     })
