@@ -2,9 +2,10 @@ import net from 'net'
 import crypto from 'crypto'
 import { exit } from 'process'
 import { Redis } from 'ioredis'
-import PQueue, { PriorityQueue, type QueueAddOptions } from 'p-queue'
+import PQueue from 'p-queue'
 import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, ListObjectsCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import config from "../config.json" with {type: 'json'}
+import https from 'https'
 
 const mode = config.mode
 
@@ -16,7 +17,11 @@ const s3 = new S3Client({
         secretAccessKey: config.secretKey,
     },
     requestHandler: {
-        httpsAgent: { maxSockets: 10000 },
+        httpsAgent: new https.Agent({
+            keepAlive: true,
+            keepAliveMsecs: 30000,
+            maxSockets: 10000,
+        }),
     }
 });
 
@@ -161,6 +166,7 @@ const server = net.createServer((socket) => {
                         let pqueue = new PQueue({ concurrency: 1 })
                         let buff: Buffer[] = []
                         let timejerk: NodeJS.Timeout
+                        let rtt = 0
                         socket.on('data', (data: Buffer) => {
                             if (timejerk)
                                 clearTimeout(timejerk)
@@ -189,19 +195,28 @@ const server = net.createServer((socket) => {
                                     const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
                                     const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                                     const tag = cipher.getAuthTag()
-                                    if (conn)
+                                    if (conn) {
+                                        rtt = Date.now()
                                         await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
-                                    else {
+                                    } else {
                                         logger("So this is the old version " + `proxy,${connectionID}/${inSeq}`)
+                                        rtt = Date.now()
                                         await new Promise<void>((resolve) => {
                                             const iv = setInterval(() => {
+                                                if (firstTime) {
+                                                    firstTime = false
+                                                    clearInterval(iv)
+                                                    clearTimeout(tm)
+                                                    resolve()
+                                                }
                                                 if (inSeqUsedByOutseq) {
                                                     inSeqUsedByOutseq = false
                                                     clearInterval(iv)
+                                                    clearTimeout(tm)
                                                     resolve()
                                                 }
                                             }, 100)
-                                            setTimeout(() => {
+                                            const tm = setTimeout(() => {
                                                 clearInterval(iv)
                                                 resolve()
                                             }, 10000)
@@ -215,8 +230,8 @@ const server = net.createServer((socket) => {
                                         })).catch((reason) => {
                                             logger(`Problem with pushing batch after informing ${reason}`, "error")
                                         })
+                                        logger(`It took me ${Date.now() - rtt}ms for pushing `)
                                         inSeq = newVersion!.toString('hex')
-                                        logger("And this is the new version didnt got sent")
                                     }
                                     buff = []
                                     sent = true
@@ -226,9 +241,10 @@ const server = net.createServer((socket) => {
                                         const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
                                         const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
                                         const tagACK = cipherACK.getAuthTag()
-                                        if (conn)
+                                        if (conn) {
+                                            rtt = Date.now()
                                             await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
-                                        else {
+                                        } else {
                                             logger("Ok we are sending rtt")
                                             await s3.send(new PutObjectCommand({
                                                 Bucket: bucketName,
@@ -238,17 +254,15 @@ const server = net.createServer((socket) => {
                                             })).catch((reason) => {
                                                 logger(`Problem with pushing ack after informing ${reason}`, "error")
                                             })
-                                            logger("Seems like sending rtt got passed? lol")
                                         }
-                                        rtt = Date.now()
                                     })
                                 })
                             }, 100)
                         })
 
-                        let rtt = 0
                         let max = 2 * 1024 * 1024
                         let inSeq = "0"
+                        let firstTime = true
                         let inSeqUsedByOutseq = false
                         const pqueueMax = new PQueue({ concurrency: 1 })
                         let sent = false

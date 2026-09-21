@@ -5,6 +5,7 @@ import { exit } from 'process'
 import PQueue from 'p-queue'
 import crypto from 'node:crypto'
 import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, ListObjectsCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import https from 'https'
 
 import config from "../config.json" with {type: 'json'}
 
@@ -18,7 +19,11 @@ const s3 = new S3Client({
         secretAccessKey: config.secretKey,
     },
     requestHandler: {
-        httpsAgent: { maxSockets: 10000 },
+        httpsAgent: new https.Agent({
+            keepAlive: true,
+            keepAliveMsecs: 30000,
+            maxSockets: 10000,
+        }),
     }
 })
 
@@ -111,17 +116,18 @@ function logger(param: string, type?: string) {
 }
 
 async function popperBuffer2(key: string) {
+    let dangoz = Date.now()
     for (let i = 0; i < 200; i++) {
         try {
+            logger("Im getting this mother fucker so bad")
             const data = await s3.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
-            await s3.send(new DeleteObjectCommand({ Bucket: bucketName, Key: key }))
+            logger(`It took me ${Date.now() - dangoz}ms to actually receive this`)
             logger("Fucked?")
             return await data.Body!.transformToByteArray()
         } catch {
             await new Promise(r => setTimeout(r, 100))
         }
     }
-    throw new Error("timed out waiting for " + key)
 }
 
 
@@ -210,6 +216,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                     logger(`proxy,${connectionID}/${inSeq}`)
                     request = await popperBuffer2(`proxy,${connectionID}/${inSeq}`)
                 }
+                logger("IS this because of that proxy, shit?")
                 if (!request) {
                     sockets.get(connectionID)?.end()
                     sockets.delete(connectionID)
