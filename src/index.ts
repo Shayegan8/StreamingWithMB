@@ -79,7 +79,7 @@ if (mode == "s3")
                         )
                     }
                 } catch (e) {
-                    logger("failed to delete " + e, "error")
+                    logger(`failed to delete ${connectionID}: ${e}`, "error")
                 }
             }
             toDelete = []
@@ -121,7 +121,7 @@ if (mode != 's3')
         await conn!.ping()
         await ack!.ping()
     } catch (e) {
-        logger("conn ping error: " + e, "error")
+        logger(`conn ping error: ${e}`, "error")
     }
 
 
@@ -141,7 +141,7 @@ const popperBuffer = async (key: string, connectionID: string, abrt: AbortContro
                 break
             const data = await s3g.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
             toDelete.push(connectionID)
-            logger("Seems like we actually got the buffer")
+            logger(`Batch received for ${key}`, "info")
             return await data.Body!.transformToByteArray()
         } catch (e) {
             await new Promise(r => setTimeout(r, 500))
@@ -208,7 +208,6 @@ const server = net.createServer((socket) => {
                         let sent = false
                         let inatervo: NodeJS.Timeout | null
                         socket.on('data', (data: Buffer) => {
-                            logger("Data arriveeed??")
                             if (timejerk)
                                 clearTimeout(timejerk)
                             pqueue.add(() => {
@@ -237,7 +236,6 @@ const server = net.createServer((socket) => {
                                     if (conn) {
                                         await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                     } else {
-                                        logger("So this is the old version " + `proxy,${connectionID}/${inSeq}`)
                                         rtt = Date.now()
                                         await s3g.send(new PutObjectCommand({
                                             Bucket: bucketName,
@@ -247,7 +245,7 @@ const server = net.createServer((socket) => {
                                         })).catch((reason) => {
                                             logger(`Problem with pushing batch after informing ${reason}`, "error")
                                         })
-                                        logger(`It took me ${Date.now() - rtt}ms for pushing `)
+                                        logger(`It took ${Date.now() - rtt}ms for pushing batch`)
                                         inSeq = newVersion!.toString('hex')
                                     }
                                     buff = []
@@ -263,7 +261,6 @@ const server = net.createServer((socket) => {
                                                 rtt = Date.now()
                                                 await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
                                             } else {
-                                                logger("Ok we are sending rtt")
                                                 await s3g.send(new PutObjectCommand({
                                                     Bucket: bucketName,
                                                     Key: `ack,${connectionID}`,
@@ -304,7 +301,6 @@ const server = net.createServer((socket) => {
                             await conn.lpush(`inform`, Buffer.concat([iv, tag, encryptedMsg]))
                         else {
                             const key = crypto.randomBytes(10).toString('hex')
-                            logger("Seems like we are sending inform WITH THIS HASH " + key)
                             await s3g.send(new PutObjectCommand({
                                 Bucket: bucketName,
                                 Key: `informs/${key}`,
@@ -313,7 +309,6 @@ const server = net.createServer((socket) => {
                             })).catch((reason) => {
                                 logger(`Problem with pushing inform ${reason}`, "error")
                             })
-                            logger("Seems like sending inform got passed")
                         }
                         if (config.ackS3 || mode != "s3") {
                             inatervo = setInterval(async () => {
@@ -329,7 +324,6 @@ const server = net.createServer((socket) => {
                                         if (conn)
                                             await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
                                         else {
-                                            logger("Ok we are sending rtt in interval")
                                             await s3g.send(new PutObjectCommand({
                                                 Bucket: bucketName,
                                                 Key: `ack,${connectionID}`,
@@ -338,7 +332,6 @@ const server = net.createServer((socket) => {
                                             })).catch((reason) => {
                                                 logger(`Problem with pushing ack after informing ${reason}`, "error")
                                             })
-                                            logger("This passed again?")
                                         }
                                     })
                                 }
@@ -399,7 +392,6 @@ const server = net.createServer((socket) => {
                                     conn.del(`appserver,${connectionID}`)
                                     await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                 } else {
-                                    logger("Somehow we managed to delete a shit?")
                                     if (config.ackS3)
                                         await s3g.send(
                                             new DeleteObjectCommand({
@@ -417,10 +409,9 @@ const server = net.createServer((socket) => {
                                         }))
 
                                         toDelete.push(connectionID)
-                                        logger("So as this one?")
                                     } catch (e) {
                                         toDelete.push(connectionID)
-                                        logger("Kose nanat " + e, "error")
+                                        logger("Problem with s3g " + e, "error")
                                     }
                                 }
                                 if (pinger)
@@ -455,7 +446,6 @@ const server = net.createServer((socket) => {
                                     if (blconn)
                                         response = (await blconn.brpopBuffer(`appserver,${connectionID}`, 20))?.[1]
                                     else {
-                                        logger(`appserver,${connectionID}/${outSeq}`)
                                         response = await popperBuffer(`appserver,${connectionID}/${outSeq}`, connectionID, ctl)
                                     }
                                     if (!response) {
@@ -478,7 +468,6 @@ const server = net.createServer((socket) => {
                                             conn.del(`appserver,${connectionID}`)
                                             await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                         } else {
-                                            logger("Somehow we managed to delete a shit?")
                                             try {
                                                 if (config.ackS3)
                                                     await s3g.send(
@@ -495,10 +484,9 @@ const server = net.createServer((socket) => {
                                                     Body: Buffer.concat([iv, tag, encryptedMsg]),
                                                 }))
                                                 toDelete.push(connectionID)
-                                                logger("So as this one?")
                                             } catch (e) {
                                                 toDelete.push(connectionID)
-                                                logger("dadwadda " + e, "error")
+                                                logger("Problem with s3g " + e, "error")
                                             }
                                         }
                                         socket.end()
@@ -529,7 +517,6 @@ const server = net.createServer((socket) => {
                                     let version: string | null
                                     if (mode == "s3") {
                                         version = decryptedChunk.subarray(0, 10).toString('hex')
-                                        logger("THIS IS THE VERSSSSIOOON " + version)
                                         outSeq = version
                                         const realMsg = decryptedChunk.subarray(10)
                                         decryptedChunk = realMsg
@@ -554,7 +541,6 @@ const server = net.createServer((socket) => {
                                             conn.del(`appserver,${connectionID}`)
                                             await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                         } else {
-                                            logger("Somehow we managed to delete a shit?")
                                             try {
                                                 if (config.ackS3)
                                                     await s3g.send(
@@ -572,10 +558,9 @@ const server = net.createServer((socket) => {
                                                 }))
 
                                                 toDelete.push(connectionID)
-                                                logger("So as this one?")
                                             } catch (e) {
                                                 toDelete.push(connectionID)
-                                                logger("dwpdpadppdawda? " + e, "error")
+                                                logger("Problem with s3g " + e, "error")
                                             }
                                         }
                                         socket.end()
@@ -599,7 +584,6 @@ const server = net.createServer((socket) => {
                                             conn.del(`appserver,${connectionID}`)
                                             await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                         } else {
-                                            logger("Somehow we managed to delete a shit?")
                                             try {
                                                 if (config.ackS3)
                                                     await s3g.send(
@@ -617,10 +601,9 @@ const server = net.createServer((socket) => {
                                                 }))
 
                                                 toDelete.push(connectionID)
-                                                logger("So as this one?")
                                             } catch (e) {
                                                 toDelete.push(connectionID)
-                                                logger("dawdwadawd ah " + e, "error")
+                                                logger("Problem with s3g " + e, "error")
                                             }
                                         }
                                     }
@@ -662,7 +645,7 @@ process.on('SIGTERM', async () => {
         await conn.flushdb()
     else {
         try {
-            const data = await s3g.send(
+            const data = await justForDelete.send(
                 new ListObjectsCommand({
                     Bucket: bucketName,
                 })
@@ -671,7 +654,7 @@ process.on('SIGTERM', async () => {
             if (data.Contents && data.Contents.length != 0) {
                 for (const element of data.Contents)
                     sagjerk.push({ Key: element.Key! })
-                await s3g.send(
+                await justForDelete.send(
                     new DeleteObjectsCommand({
                         Bucket: bucketName,
                         Delete: {
@@ -696,7 +679,7 @@ process.on('SIGINT', async () => {
         await conn.flushdb()
     else {
         try {
-            const data = await s3g.send(
+            const data = await justForDelete.send(
                 new ListObjectsCommand({
                     Bucket: bucketName,
                 })
@@ -705,7 +688,7 @@ process.on('SIGINT', async () => {
             if (data.Contents && data.Contents.length != 0) {
                 for (const element of data.Contents)
                     sagjerk.push({ Key: element.Key! })
-                await s3g.send(
+                await justForDelete.send(
                     new DeleteObjectsCommand({
                         Bucket: bucketName,
                         Delete: {
