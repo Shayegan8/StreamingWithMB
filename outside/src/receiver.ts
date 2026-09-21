@@ -65,6 +65,35 @@ if (mode != "s3")
     }
 
 
+let toDelete: string[] = []
+const toDeletePQueue = new PQueue()
+setInterval(async () => {
+    toDeletePQueue.add(async () => {
+        for (const connectionID of toDelete) {
+            const data2 = await s3.send(new ListObjectsV2Command({
+                Bucket: bucketName,
+                Prefix: `appserver,${connectionID}/`,
+            }))
+
+            const sagjerk2: { Key: string }[] = []
+            if (data2.Contents && data2.Contents.length != 0) {
+                for (const element of data2.Contents)
+                    sagjerk2.push({ Key: element.Key! })
+                await s3.send(
+                    new DeleteObjectsCommand({
+                        Bucket: bucketName,
+                        Delete: {
+                            Objects: sagjerk2,
+                        },
+                    })
+                )
+            }
+        }
+        toDelete = []
+    })
+}, 300)
+
+
 //DNS RESOLVE, for now its not optimized but works atleast
 const workingDNSes = new Map<string, { ip: string, requiredTime: number }>() // Map<address, ip>
 let fastestDNSes = new Map<string, { ip: string, requiredTime: number }>() //Map<address, fastest ip>
@@ -226,24 +255,9 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         blconn1!.quit().catch(() => { })
                         ackconn!.quit().catch(() => { })
                     } else {
-                        const data1 = await s3.send(new ListObjectsV2Command({
-                            Bucket: bucketName,
-                            Prefix: `proxy,${connectionID}/`,
-                        }))
-
-                        const sagjerk: { Key: string }[] = []
-                        if (data1.Contents && data1.Contents.length != 0) {
-                            for (const element of data1.Contents)
-                                sagjerk.push({ Key: element.Key! })
-                            await s3.send(
-                                new DeleteObjectsCommand({
-                                    Bucket: bucketName,
-                                    Delete: {
-                                        Objects: sagjerk,
-                                    },
-                                })
-                            )
-                        }
+                        toDeletePQueue.add(() => {
+                            toDelete.push(connectionID)
+                        })
                     }
                     break
                 }
@@ -270,24 +284,9 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         blconn1!.quit().catch(() => { })
                         ackconn!.quit().catch(() => { })
                     } else {
-                        const data1 = await s3.send(new ListObjectsV2Command({
-                            Bucket: bucketName,
-                            Prefix: `proxy,${connectionID}/`,
-                        }))
-
-                        const sagjerk: { Key: string }[] = []
-                        if (data1.Contents && data1.Contents.length != 0) {
-                            for (const element of data1.Contents)
-                                sagjerk.push({ Key: element.Key! })
-                            await s3.send(
-                                new DeleteObjectsCommand({
-                                    Bucket: bucketName,
-                                    Delete: {
-                                        Objects: sagjerk,
-                                    },
-                                })
-                            )
-                        }
+                        toDeletePQueue.add(() => {
+                            toDelete.push(connectionID)
+                        })
                     }
                     break
                 }
