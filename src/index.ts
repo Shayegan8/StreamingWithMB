@@ -3,11 +3,13 @@ import crypto from 'crypto'
 import { exit } from 'process'
 import { Redis } from 'ioredis'
 import PQueue from 'p-queue'
-import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, ListObjectsCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import config from "../config.json" with {type: 'json'}
 import https from 'https'
 
 const mode = config.mode
+
+logger("Config path style is " + config.pathstyle)
 
 const justForDelete = config.pathstyle ? new S3Client({
     region: config.zone,
@@ -689,7 +691,7 @@ process.on('SIGTERM', async () => {
     else {
         try {
             const data = await justForDelete.send(
-                new ListObjectsCommand({
+                new ListObjectsV2Command({
                     Bucket: bucketName,
                 })
             )
@@ -697,22 +699,34 @@ process.on('SIGTERM', async () => {
             if (data.Contents && data.Contents.length != 0) {
                 for (const element of data.Contents)
                     sagjerk.push({ Key: element.Key! })
-                await justForDelete.send(
-                    new DeleteObjectsCommand({
-                        Bucket: bucketName,
-                        Delete: {
-                            Objects: sagjerk,
-                        },
-                    })
-                )
+                try {
+                    await justForDelete.send(
+                        new DeleteObjectsCommand({
+                            Bucket: bucketName,
+                            Delete: {
+                                Objects: sagjerk,
+                            },
+                        })
+                    )
+                } catch (e) {
+                    for (const key of sagjerk) {
+                        logger("Fallback for deletion", "info")
+                        await justForDelete.send(
+                            new DeleteObjectCommand({
+                                Bucket: bucketName,
+                                Key: key.Key
+                            })
+                        )
+                    }
+                }
             }
         } catch (reason) {
             logger(`Problem with getting all chunks or deleting them ${reason}`, "error")
         }
     }
-
     logger("Removing chunks completed", "info")
     exit(0)
+
 })
 
 process.on('SIGINT', async () => {
@@ -723,7 +737,7 @@ process.on('SIGINT', async () => {
     else {
         try {
             const data = await justForDelete.send(
-                new ListObjectsCommand({
+                new ListObjectsV2Command({
                     Bucket: bucketName,
                 })
             )
@@ -731,14 +745,26 @@ process.on('SIGINT', async () => {
             if (data.Contents && data.Contents.length != 0) {
                 for (const element of data.Contents)
                     sagjerk.push({ Key: element.Key! })
-                await justForDelete.send(
-                    new DeleteObjectsCommand({
-                        Bucket: bucketName,
-                        Delete: {
-                            Objects: sagjerk,
-                        },
-                    })
-                )
+                try {
+                    await justForDelete.send(
+                        new DeleteObjectsCommand({
+                            Bucket: bucketName,
+                            Delete: {
+                                Objects: sagjerk,
+                            },
+                        })
+                    )
+                } catch (e) {
+                    for (const key of sagjerk) {
+                        logger("Fallback for deletion", "info")
+                        await justForDelete.send(
+                            new DeleteObjectCommand({
+                                Bucket: bucketName,
+                                Key: key.Key
+                            })
+                        )
+                    }
+                }
             }
         } catch (reason) {
             logger(`Problem with getting all chunks or deleting them ${reason}`, "error")

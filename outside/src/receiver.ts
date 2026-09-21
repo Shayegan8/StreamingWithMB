@@ -4,7 +4,7 @@ import { Redis } from 'ioredis'
 import { exit } from 'process'
 import PQueue from 'p-queue'
 import crypto from 'node:crypto'
-import { DeleteObjectsCommand, GetObjectCommand, ListObjectsCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import https from 'https'
 
 import config from "../config.json" with {type: 'json'}
@@ -171,7 +171,6 @@ async function getFastestIP(address: string, port: number): Promise<string | nul
 }
 
 function logger(param: string, type?: string) {
-    return
     const date = new Date(Date.now())
     console.log(type == "info" ? `[\x1b[33mINFO\x1b[0m] [\x1b[32m${mode}\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}`
         : (type == "error" ? `[\x1b[31mERR\x1b[0m] [\x1b[32m${mode}\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}` : param))
@@ -622,6 +621,8 @@ process.on('uncaughtException', (error) => {
     logger(`${error.cause}:${error.message}:${error.name}`, "error")
 })
 
+logger("Config path style is " + config.pathstyle)
+
 const s3 = config.pathstyle ? new S3Client({
     region: config.zone,
     endpoint: config.endpointUrl,
@@ -665,7 +666,28 @@ const s3 = config.pathstyle ? new S3Client({
     maxAttempts: 8
 })
 
-const s32 = new S3Client({
+const s32 = config.pathstyle ? new S3Client({
+    region: config.zone,
+    endpoint: config.endpointUrl,
+    credentials: {
+        accessKeyId: config.accessKey,
+        secretAccessKey: config.secretKey,
+    },
+    requestHandler: {
+        httpsAgent: new https.Agent({
+            keepAlive: true,
+            keepAliveMsecs: 30_000,
+            maxSockets: 512,
+            maxFreeSockets: 256,
+            timeout: 60_000,
+        }),
+        connectionTimeout: 5_000,
+        socketTimeout: 60_000
+    },
+    retryMode: 'adaptive',
+    maxAttempts: 8,
+    forcePathStyle: true
+}) : new S3Client({
     region: config.zone,
     endpoint: config.endpointUrl,
     credentials: {
@@ -694,7 +716,7 @@ process.on('SIGTERM', async () => {
     else {
         try {
             const data = await justForDelete.send(
-                new ListObjectsCommand({
+                new ListObjectsV2Command({
                     Bucket: bucketName,
                 })
             )
@@ -702,14 +724,26 @@ process.on('SIGTERM', async () => {
             if (data.Contents && data.Contents.length != 0) {
                 for (const element of data.Contents)
                     sagjerk.push({ Key: element.Key! })
-                await justForDelete.send(
-                    new DeleteObjectsCommand({
-                        Bucket: bucketName,
-                        Delete: {
-                            Objects: sagjerk,
-                        },
-                    })
-                )
+                try {
+                    await justForDelete.send(
+                        new DeleteObjectsCommand({
+                            Bucket: bucketName,
+                            Delete: {
+                                Objects: sagjerk,
+                            },
+                        })
+                    )
+                } catch (e) {
+                    for (const key of sagjerk) {
+                        logger("Fallback for deletion", "info")
+                        await justForDelete.send(
+                            new DeleteObjectCommand({
+                                Bucket: bucketName,
+                                Key: key.Key
+                            })
+                        )
+                    }
+                }
             }
         } catch (reason) {
             logger(`Problem with getting all chunks or deleting them ${reason}`, "error")
@@ -724,7 +758,7 @@ process.on('SIGINT', async () => {
     else {
         try {
             const data = await justForDelete.send(
-                new ListObjectsCommand({
+                new ListObjectsV2Command({
                     Bucket: bucketName,
                 })
             )
@@ -732,14 +766,26 @@ process.on('SIGINT', async () => {
             if (data.Contents && data.Contents.length != 0) {
                 for (const element of data.Contents)
                     sagjerk.push({ Key: element.Key! })
-                await justForDelete.send(
-                    new DeleteObjectsCommand({
-                        Bucket: bucketName,
-                        Delete: {
-                            Objects: sagjerk,
-                        },
-                    })
-                )
+                try {
+                    await justForDelete.send(
+                        new DeleteObjectsCommand({
+                            Bucket: bucketName,
+                            Delete: {
+                                Objects: sagjerk,
+                            },
+                        })
+                    )
+                } catch (e) {
+                    for (const key of sagjerk) {
+                        logger("Fallback for deletion", "info")
+                        await justForDelete.send(
+                            new DeleteObjectCommand({
+                                Bucket: bucketName,
+                                Key: key.Key
+                            })
+                        )
+                    }
+                }
             }
         } catch (reason) {
             logger(`Problem with getting all chunks or deleting them ${reason}`, "error")
