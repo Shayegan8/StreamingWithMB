@@ -205,10 +205,40 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 seqChanged = false
                 let request: Uint8Array<ArrayBufferLike> | undefined
                 if (mode != "s3")
-                    request = (await blconn1!.brpopBuffer(`proxy,${connectionID}`, 0))?.[1]
+                    request = (await blconn1!.brpopBuffer(`proxy,${connectionID}`, 20))?.[1]
                 else {
                     logger(`proxy,${connectionID}/${inSeq}`)
                     request = await popperBuffer2(`proxy,${connectionID}/${inSeq}`)
+                }
+                if (!request) {
+                    sockets.get(connectionID)?.end()
+                    sockets.delete(connectionID)
+                    if (mode != "s3") {
+                        clearInterval(pinger!)
+                        await blconn1!.del(`appserver,${connectionID}`)
+                        blconn1!.quit().catch(() => { })
+                        ackconn!.quit().catch(() => { })
+                    } else {
+                        const data1 = await s3.send(new ListObjectsV2Command({
+                            Bucket: bucketName,
+                            Prefix: `proxy,${connectionID}/`,
+                        }))
+
+                        const sagjerk: { Key: string }[] = []
+                        if (data1.Contents!.length != 0) {
+                            for (const element of data1.Contents!)
+                                sagjerk.push({ Key: element.Key! })
+                            await s3.send(
+                                new DeleteObjectsCommand({
+                                    Bucket: bucketName,
+                                    Delete: {
+                                        Objects: sagjerk,
+                                    },
+                                })
+                            )
+                        }
+                    }
+                    break
                 }
                 logger("After match, the version being used " + inSeq)
                 const extractIv = request!.subarray(0, 12)
@@ -225,10 +255,11 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 }
                 logger("The version now we want after " + inSeq)
                 if (!Buffer.from('end', 'binary').compare(decryptedChunk)) {
+                    sockets.get(connectionID)?.end()
                     sockets.delete(connectionID)
                     if (mode != "s3") {
                         clearInterval(pinger!)
-                        await blconn1!.del(`appserver,${connectionID}`)
+                        await blconn1!.del(`proxy,${connectionID}`)
                         blconn1!.quit().catch(() => { })
                         ackconn!.quit().catch(() => { })
                     } else {
@@ -238,16 +269,18 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         }))
 
                         const sagjerk: { Key: string }[] = []
-                        for (const element of data1.Contents!)
-                            sagjerk.push({ Key: element.Key! })
-                        await s3.send(
-                            new DeleteObjectsCommand({
-                                Bucket: bucketName,
-                                Delete: {
-                                    Objects: sagjerk,
-                                },
-                            })
-                        )
+                        if (data1.Contents!.length != 0) {
+                            for (const element of data1.Contents!)
+                                sagjerk.push({ Key: element.Key! })
+                            await s3.send(
+                                new DeleteObjectsCommand({
+                                    Bucket: bucketName,
+                                    Delete: {
+                                        Objects: sagjerk,
+                                    },
+                                })
+                            )
+                        }
                     }
                     break
                 }
@@ -289,9 +322,9 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
                         const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                         const tag = cipher.getAuthTag()
-                        if (conn)
+                        if (conn) {
                             await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
-                        else {
+                        } else {
                             logger("Ok before of this portion!")
                             await s3.send(new PutObjectCommand({
                                 Bucket: bucketName,
@@ -517,16 +550,18 @@ process.on('SIGTERM', async () => {
                 })
             )
             let sagjerk: { Key: string }[] = []
-            for (const element of data.Contents!)
-                sagjerk.push({ Key: element.Key! })
-            await s3.send(
-                new DeleteObjectsCommand({
-                    Bucket: bucketName,
-                    Delete: {
-                        Objects: sagjerk,
-                    },
-                })
-            )
+            if (data.Contents!.length != 0) {
+                for (const element of data.Contents!)
+                    sagjerk.push({ Key: element.Key! })
+                await s3.send(
+                    new DeleteObjectsCommand({
+                        Bucket: bucketName,
+                        Delete: {
+                            Objects: sagjerk,
+                        },
+                    })
+                )
+            }
         } catch (reason) {
             logger(`Problem with getting all chunks or deleting them ${reason}`, "error")
         }
@@ -545,16 +580,18 @@ process.on('SIGINT', async () => {
                 })
             )
             let sagjerk: { Key: string }[] = []
-            for (const element of data.Contents!)
-                sagjerk.push({ Key: element.Key! })
-            await s3.send(
-                new DeleteObjectsCommand({
-                    Bucket: bucketName,
-                    Delete: {
-                        Objects: sagjerk,
-                    },
-                })
-            )
+            if (data.Contents!.length != 0) {
+                for (const element of data.Contents!)
+                    sagjerk.push({ Key: element.Key! })
+                await s3.send(
+                    new DeleteObjectsCommand({
+                        Bucket: bucketName,
+                        Delete: {
+                            Objects: sagjerk,
+                        },
+                    })
+                )
+            }
         } catch (reason) {
             logger(`Problem with getting all chunks or deleting them ${reason}`, "error")
         }
