@@ -19,11 +19,13 @@ const s3 = new S3Client({
     requestHandler: {
         httpsAgent: new https.Agent({
             keepAlive: true,
-            keepAliveMsecs: 30000,
-            maxSockets: 10000,
-        }),
+            keepAliveMsecs: 5000,
+            maxSockets: 128,
+            maxFreeSockets: 32,
+            timeout: 30000,
+        })
     }
-});
+})
 
 const bucketName = config.bucket
 
@@ -63,7 +65,6 @@ if (mode != 's3')
         logger("conn ping error: " + e, "error")
     }
 
-const s3PQueue = new PQueue({ concurrency: 1 })
 
 function logger(param: string, type?: string) {
     const date = new Date(Date.now())
@@ -75,10 +76,10 @@ const connlist = new Map<string, any>()
 
 const symmetricKey = Buffer.from(config.symmetricKey, "hex")
 
-const popperBuffer = async (key: string) => {
+const popperBuffer = async (key: string, s3Client: S3Client) => {
     for (let i = 0; i < 200; i++) {
         try {
-            const data = await s3.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
+            const data = await s3Client.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
             await s3.send(
                 new DeleteObjectCommand({
                     Bucket: bucketName,
@@ -92,33 +93,6 @@ const popperBuffer = async (key: string) => {
         }
     }
 }
-let toDelete: string[] = []
-if (mode == "s3")
-    setInterval(async () => {
-        if (toDelete.length === 0) return
-        const toDeleteCopy = toDelete
-        toDelete = []
-        for (const connectionID of toDeleteCopy) {
-            const data2 = await s3.send(new ListObjectsV2Command({
-                Bucket: bucketName,
-                Prefix: `appserver,${connectionID}/`,
-            }))
-
-            const sagjerk2: { Key: string }[] = []
-            if (data2.Contents && data2.Contents.length != 0) {
-                for (const element of data2.Contents)
-                    sagjerk2.push({ Key: element.Key! })
-                await s3.send(
-                    new DeleteObjectsCommand({
-                        Bucket: bucketName,
-                        Delete: {
-                            Objects: sagjerk2,
-                        },
-                    })
-                )
-            }
-        }
-    }, 300)
 
 const server = net.createServer((socket) => {
     socket.on('error', (err) => {
@@ -167,6 +141,7 @@ const server = net.createServer((socket) => {
                 switch (data[1]) { // cmd
                     case 0x01: // CONNECT
                         let connectionID = crypto.randomUUID()
+                        let s31: S3Client | null
                         logger("Informing for " + connectionID, "info")
                         const msg = Buffer.from(`${DSTADDR},${DSTPORT},${connectionID},${ATYP}`, 'binary')
                         const iv = crypto.randomBytes(12)
@@ -176,17 +151,32 @@ const server = net.createServer((socket) => {
                         if (conn)
                             await conn.lpush(`inform`, Buffer.concat([iv, tag, encryptedMsg]))
                         else {
+                            s31 = new S3Client({
+                                region: config.zone,
+                                endpoint: config.endpointUrl,
+                                credentials: {
+                                    accessKeyId: config.accessKey,
+                                    secretAccessKey: config.secretKey,
+                                },
+                                requestHandler: {
+                                    httpsAgent: new https.Agent({
+                                        keepAlive: true,
+                                        keepAliveMsecs: 5000,
+                                        maxSockets: 128,
+                                        maxFreeSockets: 32,
+                                        timeout: 30000,
+                                    })
+                                }
+                            })
                             const key = crypto.randomBytes(10).toString('hex')
                             logger("Seems like we are sending inform WITH THIS HASH " + key)
-                            await s3PQueue.add(async () => {
-                                await s3.send(new PutObjectCommand({
-                                    Bucket: bucketName,
-                                    Key: `informs/${key}`,
-                                    ACL: 'private',
-                                    Body: Buffer.concat([iv, tag, encryptedMsg]),
-                                })).catch((reason) => {
-                                    logger(`Problem with pushing inform ${reason}`, "error")
-                                })
+                            await s31.send(new PutObjectCommand({
+                                Bucket: bucketName,
+                                Key: `informs/${key}`,
+                                ACL: 'private',
+                                Body: Buffer.concat([iv, tag, encryptedMsg]),
+                            })).catch((reason) => {
+                                logger(`Problem with pushing inform ${reason}`, "error")
                             })
                             logger("Seems like sending inform got passed")
                         }
@@ -223,7 +213,6 @@ const server = net.createServer((socket) => {
                                     const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                                     const tag = cipher.getAuthTag()
                                     if (conn) {
-                                        rtt = Date.now()
                                         await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                     } else {
                                         logger("So this is the old version " + `proxy,${connectionID}/${inSeq}`)
@@ -248,8 +237,7 @@ const server = net.createServer((socket) => {
                                                 resolve()
                                             }, 10000)
                                         })
-
-                                        await s3.send(new PutObjectCommand({
+                                        await s31!.send(new PutObjectCommand({
                                             Bucket: bucketName,
                                             Key: `proxy,${connectionID}/${inSeq}`,
                                             ACL: 'private',
@@ -273,7 +261,7 @@ const server = net.createServer((socket) => {
                                             await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
                                         } else {
                                             logger("Ok we are sending rtt")
-                                            await s3.send(new PutObjectCommand({
+                                            await s31!.send(new PutObjectCommand({
                                                 Bucket: bucketName,
                                                 Key: `ack,${connectionID}`,
                                                 ACL: 'private',
@@ -307,7 +295,7 @@ const server = net.createServer((socket) => {
                                         await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
                                     else {
                                         logger("Ok we are sending rtt in interval")
-                                        await s3.send(new PutObjectCommand({
+                                        await s31!.send(new PutObjectCommand({
                                             Bucket: bucketName,
                                             Key: `ack,${connectionID}`,
                                             ACL: 'private',
@@ -392,21 +380,44 @@ const server = net.createServer((socket) => {
                                     await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                 } else {
                                     logger("Somehow we managed to delete a shit?")
-                                    await s3.send(
+                                    await s31!.send(
                                         new DeleteObjectCommand({
                                             Bucket: bucketName,
                                             Key: `ack,${connectionID}`,
                                         })
                                     )
 
-                                    await s3.send(new PutObjectCommand({
-                                        Bucket: bucketName,
-                                        Key: `proxy,${connectionID}/${inSeq}`,
-                                        ACL: 'private',
-                                        Body: Buffer.concat([iv, tag, encryptedMsg]),
-                                    }))
-                                    toDelete.push(connectionID)
-                                    logger("So as this one?")
+                                    try {
+                                        await s31!.send(new PutObjectCommand({
+                                            Bucket: bucketName,
+                                            Key: `proxy,${connectionID}/${inSeq}`,
+                                            ACL: 'private',
+                                            Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                        }))
+                                        const data2 = await s31!.send(new ListObjectsV2Command({
+                                            Bucket: bucketName,
+                                            Prefix: `appserver,${connectionID}/`,
+                                        }))
+
+                                        const sagjerk2: { Key: string }[] = []
+                                        if (data2.Contents && data2.Contents.length != 0) {
+                                            for (const element of data2.Contents)
+                                                sagjerk2.push({ Key: element.Key! })
+                                            await s31!.send(
+                                                new DeleteObjectsCommand({
+                                                    Bucket: bucketName,
+                                                    Delete: {
+                                                        Objects: sagjerk2,
+                                                    },
+                                                })
+                                            )
+                                        }
+                                        s31!.destroy()
+                                        logger("So as this one?")
+                                    } catch (e) {
+                                        s31!.destroy()
+                                        logger("Kose nanat " + e, "error")
+                                    }
                                 }
                                 if (pinger)
                                     clearInterval(pinger)
@@ -441,7 +452,7 @@ const server = net.createServer((socket) => {
                                         response = (await blconn.brpopBuffer(`appserver,${connectionID}`, 20))?.[1]
                                     else {
                                         logger(`appserver,${connectionID}/${outSeq}`)
-                                        response = await popperBuffer(`appserver,${connectionID}/${outSeq}`)
+                                        response = await popperBuffer(`appserver,${connectionID}/${outSeq}`, s31!)
                                     }
                                     if (!response) {
                                         logger(`server chunk for ${connectionID} is null`, "info")
@@ -464,21 +475,44 @@ const server = net.createServer((socket) => {
                                             await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                         } else {
                                             logger("Somehow we managed to delete a shit?")
-                                            await s3.send(
-                                                new DeleteObjectCommand({
-                                                    Bucket: bucketName,
-                                                    Key: `ack,${connectionID}`,
-                                                })
-                                            )
+                                            try {
+                                                await s31!.send(
+                                                    new DeleteObjectCommand({
+                                                        Bucket: bucketName,
+                                                        Key: `ack,${connectionID}`,
+                                                    })
+                                                )
 
-                                            await s3.send(new PutObjectCommand({
-                                                Bucket: bucketName,
-                                                Key: `proxy,${connectionID}/${inSeq}`,
-                                                ACL: 'private',
-                                                Body: Buffer.concat([iv, tag, encryptedMsg]),
-                                            }))
-                                            toDelete.push(connectionID)
-                                            logger("So as this one?")
+                                                await s31!.send(new PutObjectCommand({
+                                                    Bucket: bucketName,
+                                                    Key: `proxy,${connectionID}/${inSeq}`,
+                                                    ACL: 'private',
+                                                    Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                                }))
+                                                const data2 = await s3.send(new ListObjectsV2Command({
+                                                    Bucket: bucketName,
+                                                    Prefix: `appserver,${connectionID}/`,
+                                                }))
+
+                                                const sagjerk2: { Key: string }[] = []
+                                                if (data2.Contents && data2.Contents.length != 0) {
+                                                    for (const element of data2.Contents)
+                                                        sagjerk2.push({ Key: element.Key! })
+                                                    await s3.send(
+                                                        new DeleteObjectsCommand({
+                                                            Bucket: bucketName,
+                                                            Delete: {
+                                                                Objects: sagjerk2,
+                                                            },
+                                                        })
+                                                    )
+                                                }
+                                                s31!.destroy()
+                                                logger("So as this one?")
+                                            } catch (e) {
+                                                s31!.destroy()
+                                                logger("dadwadda " + e, "error")
+                                            }
                                         }
                                         socket.end()
                                         break
@@ -532,22 +566,45 @@ const server = net.createServer((socket) => {
                                             await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                         } else {
                                             logger("Somehow we managed to delete a shit?")
-                                            await s3.send(
-                                                new DeleteObjectCommand({
+                                            try {
+                                                await s31!.send(
+                                                    new DeleteObjectCommand({
+                                                        Bucket: bucketName,
+                                                        Key: `ack,${connectionID}`,
+                                                    })
+                                                )
+
+                                                await s31!.send(new PutObjectCommand({
                                                     Bucket: bucketName,
-                                                    Key: `ack,${connectionID}`,
-                                                })
-                                            )
+                                                    Key: `proxy,${connectionID}/${inSeq}`,
+                                                    ACL: 'private',
+                                                    Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                                }))
 
-                                            await s3.send(new PutObjectCommand({
-                                                Bucket: bucketName,
-                                                Key: `proxy,${connectionID}/${inSeq}`,
-                                                ACL: 'private',
-                                                Body: Buffer.concat([iv, tag, encryptedMsg]),
-                                            }))
+                                                const data2 = await s3.send(new ListObjectsV2Command({
+                                                    Bucket: bucketName,
+                                                    Prefix: `appserver,${connectionID}/`,
+                                                }))
 
-                                            toDelete.push(connectionID)
-                                            logger("So as this one?")
+                                                const sagjerk2: { Key: string }[] = []
+                                                if (data2.Contents && data2.Contents.length != 0) {
+                                                    for (const element of data2.Contents)
+                                                        sagjerk2.push({ Key: element.Key! })
+                                                    await s3.send(
+                                                        new DeleteObjectsCommand({
+                                                            Bucket: bucketName,
+                                                            Delete: {
+                                                                Objects: sagjerk2,
+                                                            },
+                                                        })
+                                                    )
+                                                }
+                                                s31!.destroy()
+                                                logger("So as this one?")
+                                            } catch (e) {
+                                                s31!.destroy()
+                                                logger("dwpdpadppdawda? " + e, "error")
+                                            }
                                         }
                                         socket.end()
                                         break
@@ -571,22 +628,45 @@ const server = net.createServer((socket) => {
                                             await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                         } else {
                                             logger("Somehow we managed to delete a shit?")
-                                            await s3.send(
-                                                new DeleteObjectCommand({
+                                            try {
+                                                await s31!.send(
+                                                    new DeleteObjectCommand({
+                                                        Bucket: bucketName,
+                                                        Key: `ack,${connectionID}`,
+                                                    })
+                                                )
+
+                                                await s31!.send(new PutObjectCommand({
                                                     Bucket: bucketName,
-                                                    Key: `ack,${connectionID}`,
-                                                })
-                                            )
+                                                    Key: `proxy,${connectionID}/${inSeq}`,
+                                                    ACL: 'private',
+                                                    Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                                }))
 
-                                            await s3.send(new PutObjectCommand({
-                                                Bucket: bucketName,
-                                                Key: `proxy,${connectionID}/${inSeq}`,
-                                                ACL: 'private',
-                                                Body: Buffer.concat([iv, tag, encryptedMsg]),
-                                            }))
+                                                const data2 = await s3.send(new ListObjectsV2Command({
+                                                    Bucket: bucketName,
+                                                    Prefix: `appserver,${connectionID}/`,
+                                                }))
 
-                                            toDelete.push(connectionID)
-                                            logger("So as this one?")
+                                                const sagjerk2: { Key: string }[] = []
+                                                if (data2.Contents && data2.Contents.length != 0) {
+                                                    for (const element of data2.Contents)
+                                                        sagjerk2.push({ Key: element.Key! })
+                                                    await s3.send(
+                                                        new DeleteObjectsCommand({
+                                                            Bucket: bucketName,
+                                                            Delete: {
+                                                                Objects: sagjerk2,
+                                                            },
+                                                        })
+                                                    )
+                                                }
+                                                s31!.destroy()
+                                                logger("So as this one?")
+                                            } catch (e) {
+                                                s31!.destroy()
+                                                logger("dawdwadawd ah " + e, "error")
+                                            }
                                         }
                                     }
                                     clearInterval(inatervo)
