@@ -19,13 +19,16 @@ const justForDelete = new S3Client({
     requestHandler: {
         httpsAgent: new https.Agent({
             keepAlive: true,
-            keepAliveMsecs: 5000,
-            maxSockets: 128,
-            timeout: 30000,
-            scheduling: 'lifo'
-        })
+            keepAliveMsecs: 30_000,
+            maxSockets: 512,
+            maxFreeSockets: 256,
+            timeout: 60_000,
+        }),
+        connectionTimeout: 5_000,
+        socketTimeout: 60_000
     },
-    maxAttempts: 3
+    retryMode: 'adaptive',
+    maxAttempts: 8
 })
 
 const s3g = new S3Client({
@@ -39,12 +42,15 @@ const s3g = new S3Client({
         httpsAgent: new https.Agent({
             keepAlive: true,
             keepAliveMsecs: 30_000,
-            maxSockets: 2048,
+            maxSockets: 512,
+            maxFreeSockets: 256,
             timeout: 60_000,
-            scheduling: 'lifo'
-        })
+        }),
+        connectionTimeout: 5_000,
+        socketTimeout: 60_000
     },
-    maxAttempts: 3
+    retryMode: 'adaptive',
+    maxAttempts: 8
 })
 
 let toDelete: string[] = []
