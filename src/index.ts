@@ -245,7 +245,7 @@ const server = net.createServer((socket) => {
                                         })).catch((reason) => {
                                             logger(`Problem with pushing batch after informing ${reason}`, "error")
                                         })
-                                        logger(`It took ${Date.now() - rtt}ms for pushing batch`)
+                                        logger(`It took ${Date.now() - rtt}ms for pushing batch`, "info")
                                         inSeq = newVersion!.toString('hex')
                                     }
                                     buff = []
