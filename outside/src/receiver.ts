@@ -143,17 +143,19 @@ function logger(param: string, type?: string) {
         : (type == "error" ? `[\x1b[31mERR\x1b[0m] [\x1b[32m${mode}\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}` : param))
 }
 
-async function popperBuffer2(key: string) {
+async function popperBuffer2(key: string, connectionID: string) {
     let dangoz = Date.now()
     for (let i = 0; i < 200; i++) {
         try {
+            if (sockets.get(connectionID)?.abort)
+                break
             logger("Im getting this mother fucker so bad")
             const data = await s3.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
             logger(`It took me ${Date.now() - dangoz}ms to actually receive this`)
             logger("Fucked?")
             return await data.Body!.transformToByteArray()
         } catch {
-            await new Promise(r => setTimeout(r, 100))
+            await new Promise(r => setTimeout(r, 500))
         }
     }
 }
@@ -228,6 +230,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
             let inSeq = "0"
             let outSeq = "0"
             let seqChanged = true
+            let abort = false
             while (mode == "s3" ? await new Promise<Boolean>((resolve) => {
                 const ass = setInterval(() => {
                     if (seqChanged) {
@@ -242,12 +245,12 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                     request = (await blconn1!.brpopBuffer(`proxy,${connectionID}`, 20))?.[1]
                 else {
                     logger(`proxy,${connectionID}/${inSeq}`)
-                    request = await popperBuffer2(`proxy,${connectionID}/${inSeq}`)
+                    request = await popperBuffer2(`proxy,${connectionID}/${inSeq}`, connectionID)
                 }
                 logger("IS this because of that proxy, shit?")
                 if (!request) {
                     logger("Request issue")
-                    sockets.get(connectionID)?.end()
+                    sockets.get(connectionID)?.socket?.end()
                     sockets.delete(connectionID)
                     if (mode != "s3") {
                         clearInterval(pinger!)
@@ -274,7 +277,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 }
                 logger("The version now we want after " + inSeq)
                 if (!Buffer.from('end', 'binary').compare(decryptedChunk)) {
-                    sockets.get(connectionID)?.end()
+                    sockets.get(connectionID)?.socket?.end()
                     sockets.delete(connectionID)
                     if (mode != "s3") {
                         clearInterval(pinger!)
@@ -291,11 +294,11 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 if (mode != "s3") {
                     buffered = (await ackconn!.brpopBuffer(`ack,${connectionID}`, 0))?.[1]
                 } else {
-                    buffered = await popperBuffer2(`ack,${connectionID}`)
+                    buffered = await popperBuffer2(`ack,${connectionID}`, connectionID)
                 }
                 if (!buffered) {
                     logger("Buffered issue")
-                    sockets.get(connectionID)?.end()
+                    sockets.get(connectionID)?.socket?.end()
                     sockets.delete(connectionID)
                     if (mode != "s3") {
                         clearInterval(pinger!)
@@ -323,6 +326,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                     else
                         fastestWorkingIP = dstaddr
                     if (!fastestWorkingIP) {
+
                         let msg: Buffer<ArrayBuffer> | null
                         let newVersion: Buffer
                         if (mode != "s3")
@@ -365,7 +369,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         break
                     }
                     const appServer = net.createConnection(dstport, fastestWorkingIP)
-                    sockets.set(connectionID, appServer)
+                    sockets.set(connectionID, { socket: appServer, abort: false })
                     const res = await new Promise<Boolean>((resolve) => {
                         const connectionTimeout = setTimeout(() => {
                             if (appServer)
@@ -393,7 +397,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         break
                     }
 
-                    sockets.get(connectionID)?.write(mode == "s3" ? realMsg! : decryptedChunk)
+                    sockets.get(connectionID)?.socket?.write(mode == "s3" ? realMsg! : decryptedChunk)
                     let buffass: Buffer[] = []
                     let timeout: NodeJS.Timeout
                     let pqueue = new PQueue({ concurrency: 1 })
@@ -496,18 +500,22 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                             clearInterval(pinger!)
                             blconn1!.quit().catch(() => { })
                             ackconn!.quit().catch(() => { })
+                            sockets.delete(connectionID)
+                        } else {
+                            abort = true
+                            toDelete.push(connectionID)
+                            sockets.set(connectionID, { socket: undefined, abort: true })
                         }
-                        sockets.delete(connectionID)
                     })
                 } else
-                    sockets.get(connectionID)?.write(mode == "s3" ? realMsg! : decryptedChunk)
+                    sockets.get(connectionID)?.socket?.write(mode == "s3" ? realMsg! : decryptedChunk)
             }
         } catch (e) {
         }
     })
 }
 
-const sockets = new Map<string, Socket>()
+const sockets = new Map<string, { socket: Socket | undefined, abort: boolean }>()
 setImmediate(async () => {
     while (true) {
         if (blconn)

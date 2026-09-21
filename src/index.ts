@@ -88,7 +88,7 @@ const popperBuffer = async (key: string) => {
             logger("Seems like we actually got the buffer")
             return await data.Body!.transformToByteArray()
         } catch (e) {
-            await new Promise(r => setTimeout(r, 100))
+            await new Promise(r => setTimeout(r, 500))
         }
     }
 }
