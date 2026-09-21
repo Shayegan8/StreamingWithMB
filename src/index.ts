@@ -9,7 +9,28 @@ import https from 'https'
 
 const mode = config.mode
 
-const justForDelete = new S3Client({
+const justForDelete = config.pathstyle ? new S3Client({
+    region: config.zone,
+    endpoint: config.endpointUrl,
+    credentials: {
+        accessKeyId: config.accessKey,
+        secretAccessKey: config.secretKey,
+    },
+    requestHandler: {
+        httpsAgent: new https.Agent({
+            keepAlive: true,
+            keepAliveMsecs: 30_000,
+            maxSockets: 512,
+            maxFreeSockets: 256,
+            timeout: 60_000,
+        }),
+        connectionTimeout: 5_000,
+        socketTimeout: 60_000
+    },
+    retryMode: 'adaptive',
+    maxAttempts: 8,
+    forcePathStyle: true
+}) : new S3Client({
     region: config.zone,
     endpoint: config.endpointUrl,
     credentials: {
@@ -31,7 +52,29 @@ const justForDelete = new S3Client({
     maxAttempts: 8
 })
 
-const s3g = new S3Client({
+
+const s3g = config.pathstyle ? new S3Client({
+    region: config.zone,
+    endpoint: config.endpointUrl,
+    credentials: {
+        accessKeyId: config.accessKey,
+        secretAccessKey: config.secretKey,
+    },
+    requestHandler: {
+        httpsAgent: new https.Agent({
+            keepAlive: true,
+            keepAliveMsecs: 30_000,
+            maxSockets: 512,
+            maxFreeSockets: 256,
+            timeout: 60_000,
+        }),
+        connectionTimeout: 5_000,
+        socketTimeout: 60_000
+    },
+    retryMode: 'adaptive',
+    maxAttempts: 8,
+    forcePathStyle: true
+}) : new S3Client({
     region: config.zone,
     endpoint: config.endpointUrl,
     credentials: {
