@@ -553,6 +553,11 @@ setImmediate(async () => {
                         Prefix: "informs/",
                     }))
 
+                    if (!data.Contents || data.Contents.length === 0) {
+                        await new Promise(r => setTimeout(r, 500))
+                        continue
+                    }
+
                     setImmediate(async () => {
                         let sagjerk: { Key: string }[] = []
 
@@ -564,7 +569,6 @@ setImmediate(async () => {
                                     const daljerk = await s3g.send(new GetObjectCommand({
                                         Bucket: bucketName, Key: element.Key
                                     }))
-
                                     logger("OK so now this means we really have the shit out of it")
                                     callback(await daljerk.Body!.transformToByteArray())
                                 } catch (e) {
@@ -581,6 +585,7 @@ setImmediate(async () => {
                         )
                     })
                 } catch (e) {
+                    await new Promise(r => setTimeout(r, 500))
                     logger("Bad delete " + e)
                 }
             }
