@@ -23,6 +23,7 @@ const justForDelete = new S3Client({
             maxSockets: 128,
             maxFreeSockets: 32,
             timeout: 30000,
+            scheduling: 'lifo'
         })
     },
     maxAttempts: 3
@@ -42,6 +43,7 @@ const s3g = new S3Client({
             maxSockets: 2048,
             maxFreeSockets: 256,
             timeout: 60_000,
+            scheduling: 'lifo'
         })
     },
     maxAttempts: 3
