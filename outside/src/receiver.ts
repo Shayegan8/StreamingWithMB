@@ -11,41 +11,50 @@ import config from "../config.json" with {type: 'json'}
 
 const mode = config.mode
 
-const s3 = new S3Client({
-    region: config.zone,
-    endpoint: config.endpointUrl,
-    credentials: {
-        accessKeyId: config.accessKey,
-        secretAccessKey: config.secretKey,
-    },
-    requestHandler: {
-        httpsAgent: new https.Agent({
-            keepAlive: true,
-            keepAliveMsecs: 5000,
-            maxSockets: 128,
-            maxFreeSockets: 32,
-            timeout: 30000,
-        })
-    }
-})
+let g = 0
 
-const s3Delete = new S3Client({
-    region: config.zone,
-    endpoint: config.endpointUrl,
-    credentials: {
-        accessKeyId: config.accessKey,
-        secretAccessKey: config.secretKey,
-    },
-    requestHandler: {
-        httpsAgent: new https.Agent({
-            keepAlive: true,
-            keepAliveMsecs: 5000,
-            maxSockets: 128,
-            maxFreeSockets: 32,
-            timeout: 30000,
-        })
-    }
-})
+let s3list: S3Client[] = []
+if (mode == "s3")
+    for (let index = 0; index < 10; index++)
+        s3list.push(new S3Client({
+            region: config.zone,
+            endpoint: config.endpointUrl,
+            credentials: {
+                accessKeyId: config.accessKey,
+                secretAccessKey: config.secretKey,
+            },
+            requestHandler: {
+                httpsAgent: new https.Agent({
+                    keepAlive: true,
+                    keepAliveMsecs: 5000,
+                    maxSockets: 128,
+                    maxFreeSockets: 32,
+                    timeout: 30000,
+                })
+            }
+        }))
+
+let s3DeleteList: S3Client[] = []
+if (mode == "s3")
+    for (let index = 0; index < 10; index++)
+        s3DeleteList.push(new S3Client({
+            region: config.zone,
+            endpoint: config.endpointUrl,
+            credentials: {
+                accessKeyId: config.accessKey,
+                secretAccessKey: config.secretKey,
+            },
+            requestHandler: {
+                httpsAgent: new https.Agent({
+                    keepAlive: true,
+                    keepAliveMsecs: 5000,
+                    maxSockets: 128,
+                    maxFreeSockets: 32,
+                    timeout: 30000,
+                })
+            }
+        }))
+
 
 const bucketName = config.bucket
 
@@ -647,7 +656,9 @@ setImmediate(async () => {
         else {
             try {
                 // and i wait here for client that he deleted directory, with this way we can send all packets from client
-                const data = await s3.send(new ListObjectsV2Command({
+                if (s3list.length == g)
+                    g = 0
+                const data = await s3list[g]!.send(new ListObjectsV2Command({
                     Bucket: bucketName,
                     Prefix: "informs/",
                 }))
@@ -658,14 +669,14 @@ setImmediate(async () => {
                     for (const element of data.Contents) {
                         logger("Name of that " + element.Key)
                         sagjerk.push({ Key: element.Key! })
-                        const daljerk = await s3.send(new GetObjectCommand({
+                        const daljerk = await s3list[g]!.send(new GetObjectCommand({
                             Bucket: bucketName, Key: element.Key
                         }))
 
                         logger("OK so now this means we really have the shit out of it")
                         callback(await daljerk.Body!.transformToByteArray())
                     }
-                await s3Delete.send(
+                await s3DeleteList[g++]!.send(
                     new DeleteObjectsCommand({
                         Bucket: bucketName,
                         Delete: {
@@ -699,7 +710,9 @@ process.on('SIGTERM', async () => {
         await conn.flushdb()
     else {
         try {
-            const data = await s3.send(
+            if (s3list.length == g)
+                g = 0
+            const data = await s3list[g]!.send(
                 new ListObjectsCommand({
                     Bucket: bucketName,
                 })
@@ -708,7 +721,7 @@ process.on('SIGTERM', async () => {
             if (data.Contents && data.Contents.length != 0) {
                 for (const element of data.Contents)
                     sagjerk.push({ Key: element.Key! })
-                await s3.send(
+                await s3DeleteList[g++]!.send(
                     new DeleteObjectsCommand({
                         Bucket: bucketName,
                         Delete: {
@@ -729,7 +742,9 @@ process.on('SIGINT', async () => {
         await conn.flushdb()
     else {
         try {
-            const data = await s3.send(
+            if (s3list.length == g)
+                g = 0
+            const data = await s3list[g]!.send(
                 new ListObjectsCommand({
                     Bucket: bucketName,
                 })
@@ -738,7 +753,7 @@ process.on('SIGINT', async () => {
             if (data.Contents && data.Contents.length != 0) {
                 for (const element of data.Contents)
                     sagjerk.push({ Key: element.Key! })
-                await s3.send(
+                await s3DeleteList[g++]!.send(
                     new DeleteObjectsCommand({
                         Bucket: bucketName,
                         Delete: {
