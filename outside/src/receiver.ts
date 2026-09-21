@@ -21,7 +21,7 @@ const s3 = new S3Client({
     requestHandler: {
         httpsAgent: new https.Agent({
             keepAlive: true,
-            keepAliveMsecs: 30000,
+            keepAliveMsecs: 5000,
             maxSockets: 128,
             maxFreeSockets: 32,
             timeout: 30000,
@@ -125,7 +125,7 @@ async function popperBuffer2(key: string, connectionID: string, s3Client: S3Clie
                 logger("Freeing memory")
                 sockets.delete(connectionID)
                 try {
-                    const data2 = await s3.send(new ListObjectsV2Command({
+                    const data2 = await s3Client.send(new ListObjectsV2Command({
                         Bucket: bucketName,
                         Prefix: `proxy,${connectionID}/`,
                     }))
@@ -134,7 +134,7 @@ async function popperBuffer2(key: string, connectionID: string, s3Client: S3Clie
                     if (data2.Contents && data2.Contents.length != 0) {
                         for (const element of data2.Contents)
                             sagjerk2.push({ Key: element.Key! })
-                        await s3.send(
+                        await s3Client.send(
                             new DeleteObjectsCommand({
                                 Bucket: bucketName,
                                 Delete: {
@@ -276,7 +276,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         ackconn!.quit().catch(() => { })
                     } else {
                         try {
-                            const data2 = await s3.send(new ListObjectsV2Command({
+                            const data2 = await s31!.send(new ListObjectsV2Command({
                                 Bucket: bucketName,
                                 Prefix: `proxy,${connectionID}/`,
                             }))
@@ -285,7 +285,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                             if (data2.Contents && data2.Contents.length != 0) {
                                 for (const element of data2.Contents)
                                     sagjerk2.push({ Key: element.Key! })
-                                await s3.send(
+                                await s31!.send(
                                     new DeleteObjectsCommand({
                                         Bucket: bucketName,
                                         Delete: {
@@ -327,7 +327,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         ackconn!.quit().catch(() => { })
                     } else {
                         try {
-                            const data2 = await s3.send(new ListObjectsV2Command({
+                            const data2 = await s31!.send(new ListObjectsV2Command({
                                 Bucket: bucketName,
                                 Prefix: `proxy,${connectionID}/`,
                             }))
@@ -336,7 +336,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                             if (data2.Contents && data2.Contents.length != 0) {
                                 for (const element of data2.Contents)
                                     sagjerk2.push({ Key: element.Key! })
-                                await s3.send(
+                                await s31!.send(
                                     new DeleteObjectsCommand({
                                         Bucket: bucketName,
                                         Delete: {
@@ -371,7 +371,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         ackconn!.quit().catch(() => { })
                     } else {
                         try {
-                            const data2 = await s3.send(new ListObjectsV2Command({
+                            const data2 = await s31!.send(new ListObjectsV2Command({
                                 Bucket: bucketName,
                                 Prefix: `proxy,${connectionID}/`,
                             }))
@@ -380,7 +380,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                             if (data2.Contents && data2.Contents.length != 0) {
                                 for (const element of data2.Contents)
                                     sagjerk2.push({ Key: element.Key! })
-                                await s3.send(
+                                await s31!.send(
                                     new DeleteObjectsCommand({
                                         Bucket: bucketName,
                                         Delete: {
@@ -440,7 +440,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                                 })).catch((reason) => {
                                     logger(`Problem with pushing appserver end ${reason}`, "error")
                                 })
-                                const data2 = await s3.send(new ListObjectsV2Command({
+                                const data2 = await s31!.send(new ListObjectsV2Command({
                                     Bucket: bucketName,
                                     Prefix: `proxy,${connectionID}/`,
                                 }))
@@ -449,7 +449,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                                 if (data2.Contents && data2.Contents.length != 0) {
                                     for (const element of data2.Contents)
                                         sagjerk2.push({ Key: element.Key! })
-                                    await s3.send(
+                                    await s31!.send(
                                         new DeleteObjectsCommand({
                                             Bucket: bucketName,
                                             Delete: {

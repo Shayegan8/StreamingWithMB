@@ -80,7 +80,7 @@ const popperBuffer = async (key: string, s3Client: S3Client) => {
     for (let i = 0; i < 200; i++) {
         try {
             const data = await s3Client.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
-            await s3.send(
+            await s3Client.send(
                 new DeleteObjectCommand({
                     Bucket: bucketName,
                     Key: key,
@@ -489,7 +489,7 @@ const server = net.createServer((socket) => {
                                                     ACL: 'private',
                                                     Body: Buffer.concat([iv, tag, encryptedMsg]),
                                                 }))
-                                                const data2 = await s3.send(new ListObjectsV2Command({
+                                                const data2 = await s31!.send(new ListObjectsV2Command({
                                                     Bucket: bucketName,
                                                     Prefix: `appserver,${connectionID}/`,
                                                 }))
@@ -498,7 +498,7 @@ const server = net.createServer((socket) => {
                                                 if (data2.Contents && data2.Contents.length != 0) {
                                                     for (const element of data2.Contents)
                                                         sagjerk2.push({ Key: element.Key! })
-                                                    await s3.send(
+                                                    await s31!.send(
                                                         new DeleteObjectsCommand({
                                                             Bucket: bucketName,
                                                             Delete: {
@@ -581,7 +581,7 @@ const server = net.createServer((socket) => {
                                                     Body: Buffer.concat([iv, tag, encryptedMsg]),
                                                 }))
 
-                                                const data2 = await s3.send(new ListObjectsV2Command({
+                                                const data2 = await s31!.send(new ListObjectsV2Command({
                                                     Bucket: bucketName,
                                                     Prefix: `appserver,${connectionID}/`,
                                                 }))
@@ -590,7 +590,7 @@ const server = net.createServer((socket) => {
                                                 if (data2.Contents && data2.Contents.length != 0) {
                                                     for (const element of data2.Contents)
                                                         sagjerk2.push({ Key: element.Key! })
-                                                    await s3.send(
+                                                    await s31!.send(
                                                         new DeleteObjectsCommand({
                                                             Bucket: bucketName,
                                                             Delete: {
@@ -643,7 +643,7 @@ const server = net.createServer((socket) => {
                                                     Body: Buffer.concat([iv, tag, encryptedMsg]),
                                                 }))
 
-                                                const data2 = await s3.send(new ListObjectsV2Command({
+                                                const data2 = await s31!.send(new ListObjectsV2Command({
                                                     Bucket: bucketName,
                                                     Prefix: `appserver,${connectionID}/`,
                                                 }))
@@ -652,7 +652,7 @@ const server = net.createServer((socket) => {
                                                 if (data2.Contents && data2.Contents.length != 0) {
                                                     for (const element of data2.Contents)
                                                         sagjerk2.push({ Key: element.Key! })
-                                                    await s3.send(
+                                                    await s31!.send(
                                                         new DeleteObjectsCommand({
                                                             Bucket: bucketName,
                                                             Delete: {
