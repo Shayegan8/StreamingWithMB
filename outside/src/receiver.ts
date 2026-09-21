@@ -23,34 +23,12 @@ const justForDelete = new S3Client({
             keepAlive: true,
             keepAliveMsecs: 5000,
             maxSockets: 128,
-            maxFreeSockets: 32,
             timeout: 30000,
             scheduling: 'lifo'
         })
     },
     maxAttempts: 3
 })
-
-const s3g = new S3Client({
-    region: config.zone,
-    endpoint: config.endpointUrl,
-    credentials: {
-        accessKeyId: config.accessKey,
-        secretAccessKey: config.secretKey,
-    },
-    requestHandler: {
-        httpsAgent: new https.Agent({
-            keepAlive: true,
-            keepAliveMsecs: 30_000,
-            maxSockets: 2048,
-            maxFreeSockets: 256,
-            timeout: 60_000,
-            scheduling: 'lifo'
-        })
-    },
-    maxAttempts: 3
-})
-
 
 let toDelete: string[] = []
 if (mode == "s3")
@@ -173,18 +151,19 @@ function logger(param: string, type?: string) {
         : (type == "error" ? `[\x1b[31mERR\x1b[0m] [\x1b[32m${mode}\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}` : param))
 }
 
-async function popperBuffer2(key: string, connectionID: string) {
+async function popperBuffer2(key: string, connectionID: string, s3g: S3Client, ctl: AbortController) {
     let dangoz = Date.now()
     let delay = 10
     for (let i = 0; i < 200; i++) {
         try {
-            if (sockets.get(connectionID)?.abort) {
+            if (ctl.signal.aborted) {
                 logger("Freeing memory")
                 sockets.delete(connectionID)
+                s3g?.destroy()
                 toDelete.push(connectionID)
                 break
             }
-            logger("Im getting this mother fucker so bad")
+            logger("Im getting this mother fucker so bad " + key)
             const data = await s3g.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
             toDelete.push(connectionID)
             logger(`It took me ${Date.now() - dangoz}ms to actually receive this`)
@@ -198,7 +177,7 @@ async function popperBuffer2(key: string, connectionID: string) {
 }
 
 
-const callback = (payload: Uint8Array<ArrayBufferLike>) => {
+const callback = (payload: Uint8Array<ArrayBufferLike>, s3g?: S3Client) => {
     setImmediate(async () => {
         const extractIv = payload.subarray(0, 12)
         const tag = payload.subarray(12, 28)
@@ -266,13 +245,14 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
             let ack = 2 * 1024 * 1024
             let inSeq = "0"
             let outSeq = "0"
-            while (mode == "s3" ? !(sockets.get(connectionID)?.abort) : true) {
+            const aborti = new AbortController()
+            while (mode == "s3" ? !(aborti.signal.aborted) : true) {
                 let request: Uint8Array<ArrayBufferLike> | undefined
                 if (mode != "s3")
                     request = (await blconn1!.brpopBuffer(`proxy,${connectionID}`, 20))?.[1]
                 else {
                     logger(`proxy,${connectionID}/${inSeq}`)
-                    request = await popperBuffer2(`proxy,${connectionID}/${inSeq}`, connectionID)
+                    request = await popperBuffer2(`proxy,${connectionID}/${inSeq}`, connectionID, s3g!, aborti)
                 }
                 logger("IS this because of that proxy, shit?")
                 if (!request) {
@@ -285,6 +265,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         blconn1!.quit().catch(() => { })
                         ackconn!.quit().catch(() => { })
                     } else {
+                        s3g?.destroy()
                         toDelete.push(connectionID)
                     }
                     break
@@ -307,12 +288,14 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                     logger("Freeing memory from client")
                     sockets.get(connectionID)?.socket?.end()
                     sockets.delete(connectionID)
+                    aborti.abort()
                     if (mode != "s3") {
                         clearInterval(pinger!)
                         await blconn1!.del(`proxy,${connectionID}`)
                         blconn1!.quit().catch(() => { })
                         ackconn!.quit().catch(() => { })
                     } else {
+                        s3g?.destroy()
                         toDelete.push(connectionID)
                     }
                     break
@@ -322,7 +305,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 if (mode != "s3") {
                     buffered = (await ackconn!.brpopBuffer(`ack,${connectionID}`, 20))?.[1]
                 } else if (config.ackS3) {
-                    buffered = await popperBuffer2(`ack,${connectionID}`, connectionID)
+                    buffered = await popperBuffer2(`ack,${connectionID}`, connectionID, s3g!, aborti)
                 }
                 if (!buffered && config.ackS3) {
                     logger("Buffered issue")
@@ -334,6 +317,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         blconn1!.quit().catch(() => { })
                         ackconn!.quit().catch(() => { })
                     } else {
+                        s3g?.destroy()
                         toDelete.push(connectionID)
                     }
                     break
@@ -374,7 +358,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         } else {
                             logger("Ok before of this portion!")
                             try {
-                                await s3g.send(new PutObjectCommand({
+                                await s3g!.send(new PutObjectCommand({
                                     Bucket: bucketName,
                                     Key: `appserver,${connectionID}/${outSeq}`,
                                     ACL: 'private',
@@ -399,7 +383,19 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         break
                     }
                     const appServer = net.createConnection(dstport, fastestWorkingIP)
-                    sockets.set(connectionID, { socket: appServer, abort: false })
+                    appServer.on('end', async () => {
+                        logger("Server aborti")
+                        if (mode != "s3") {
+                            clearInterval(pinger!)
+                            blconn1!.quit().catch(() => { })
+                            ackconn!.quit().catch(() => { })
+                            sockets.delete(connectionID)
+                        } else {
+                            aborti.abort()
+                        }
+                    })
+
+                    sockets.set(connectionID, { socket: appServer })
                     const res = await new Promise<Boolean>((resolve) => {
                         const connectionTimeout = setTimeout(() => {
                             if (appServer)
@@ -464,7 +460,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                                         await conn!.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                     } else {
                                         logger("Ok we send appserver chunk")
-                                        await s3g.send(new PutObjectCommand({
+                                        await s3g!.send(new PutObjectCommand({
                                             Bucket: bucketName,
                                             Key: `appserver,${connectionID}/${outSeq}`,
                                             ACL: 'private',
@@ -505,7 +501,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                                         await conn!.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                     } else {
                                         logger("Sending appserver chunk in timeout")
-                                        await s3g.send(new PutObjectCommand({
+                                        await s3g!.send(new PutObjectCommand({
                                             Bucket: bucketName,
                                             Key: `appserver,${connectionID}/${outSeq}`,
                                             ACL: 'private',
@@ -523,16 +519,6 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         })
                     })
                     // notify the proxy appserver dont sends data anymore (half close)
-                    appServer.on('end', async () => {
-                        if (mode != "s3") {
-                            clearInterval(pinger!)
-                            blconn1!.quit().catch(() => { })
-                            ackconn!.quit().catch(() => { })
-                            sockets.delete(connectionID)
-                        } else {
-                            sockets.set(connectionID, { socket: undefined, abort: true })
-                        }
-                    })
                 } else
                     sockets.get(connectionID)?.socket?.write(mode == "s3" ? realMsg! : decryptedChunk)
             }
@@ -541,55 +527,83 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
     })
 }
 
-const sockets = new Map<string, { socket: Socket | undefined, abort: boolean }>()
-setInterval(async () => {
-    try {
-        if (blconn)
-            callback((await blconn.brpopBuffer(`inform`, 20))?.[1]!)
-        else {
-            const data = await s3g.send(new ListObjectsV2Command({
-                Bucket: bucketName,
-                Prefix: "informs/",
-            }))
+const sockets = new Map<string, { socket: Socket | undefined }>()
+setImmediate(async () => {
+    while (true) {
+        try {
+            if (blconn) {
+                logger("SOMEHOW?")
+                callback((await blconn.brpopBuffer(`inform`, 20))?.[1]!)
+            } else {
+                const data = await s3.send(new ListObjectsV2Command({
+                    Bucket: bucketName,
+                    Prefix: "informs/",
+                }))
 
-            if (!data.Contents || data.Contents.length === 0)
-                return
+                if (!data.Contents || data.Contents.length === 0) {
+                    await new Promise(r => setTimeout(r, 500))
+                    continue
+                }
+                let sagjerk = data.Contents!.map((each) => each.Key!)
 
-            try {
-
-                let sagjerk: { Key: string }[] = []
-
-                if (data.Contents && data.Contents.length != 0)
-                    for (const element of data.Contents) {
-                        logger("Name of that " + element.Key)
-                        sagjerk.push({ Key: element.Key! })
+                try {
+                    await Promise.all(sagjerk.map(async (key) => {
                         try {
+                            logger("OK HERE!")
+                            const s3g = new S3Client({
+                                region: config.zone,
+                                endpoint: config.endpointUrl,
+                                credentials: {
+                                    accessKeyId: config.accessKey,
+                                    secretAccessKey: config.secretKey,
+                                },
+                                requestHandler: {
+                                    httpsAgent: new https.Agent({
+                                        keepAlive: true,
+                                        keepAliveMsecs: 30_000,
+                                        maxSockets: 64,
+                                        timeout: 60_000,
+                                        scheduling: 'lifo'
+                                    })
+                                },
+                                maxAttempts: 3
+                            })
                             const daljerk = await s3g.send(new GetObjectCommand({
-                                Bucket: bucketName, Key: element.Key
+                                Bucket: bucketName, Key: key
                             }))
                             logger("OK so now this means we really have the shit out of it")
-                            if (daljerk.Body)
-                                callback(await daljerk.Body.transformToByteArray())
+                            callback(await daljerk.Body!.transformToByteArray(), s3g)
                         } catch (e) {
                             logger("Bad batch " + e)
                         }
-                    }
-                await s3g.send(
-                    new DeleteObjectsCommand({
-                        Bucket: bucketName,
-                        Delete: {
-                            Objects: sagjerk,
-                        },
-                    })
-                )
-            } catch (e) {
-                logger("Bad delete " + e)
+
+                    }))
+                } catch (e) {
+                    await new Promise(r => setTimeout(r, 500))
+                    logger("Bad delete " + e)
+                }
+
+                logger("This called faster?")
+                try {
+                    await s3.send(
+                        new DeleteObjectsCommand({
+                            Bucket: bucketName,
+                            Delete: {
+                                Objects: sagjerk.map(Key => ({ Key })),
+                            }
+                        })
+                    )
+                } catch (e) {
+                    logger("Bad delete " + e)
+                }
+
             }
+        } catch (e) {
+            await new Promise(r => setTimeout(r, 500))
+            logger("Bad shit " + e, "error")
         }
-    } catch (e) {
-        logger("Bad shit " + e, "error")
     }
-}, 500)
+})
 
 if (mode != "s3")
     setInterval(async () => {
@@ -604,12 +618,31 @@ process.on('uncaughtException', (error) => {
     logger(`${error.cause}:${error.message}:${error.name}`, "error")
 })
 
+const s3 = new S3Client({
+    region: config.zone,
+    endpoint: config.endpointUrl,
+    credentials: {
+        accessKeyId: config.accessKey,
+        secretAccessKey: config.secretKey,
+    },
+    requestHandler: {
+        httpsAgent: new https.Agent({
+            keepAlive: true,
+            keepAliveMsecs: 30_000,
+            maxSockets: 2048,
+            timeout: 60_000,
+            scheduling: 'lifo'
+        })
+    },
+    maxAttempts: 3
+})
+
 process.on('SIGTERM', async () => {
     if (conn)
         await conn.flushdb()
     else {
         try {
-            const data = await s3g.send(
+            const data = await s3.send(
                 new ListObjectsCommand({
                     Bucket: bucketName,
                 })
@@ -618,7 +651,7 @@ process.on('SIGTERM', async () => {
             if (data.Contents && data.Contents.length != 0) {
                 for (const element of data.Contents)
                     sagjerk.push({ Key: element.Key! })
-                await s3g.send(
+                await s3.send(
                     new DeleteObjectsCommand({
                         Bucket: bucketName,
                         Delete: {
@@ -639,7 +672,7 @@ process.on('SIGINT', async () => {
         await conn.flushdb()
     else {
         try {
-            const data = await s3g.send(
+            const data = await s3.send(
                 new ListObjectsCommand({
                     Bucket: bucketName,
                 })
@@ -648,7 +681,7 @@ process.on('SIGINT', async () => {
             if (data.Contents && data.Contents.length != 0) {
                 for (const element of data.Contents)
                     sagjerk.push({ Key: element.Key! })
-                await s3g.send(
+                await s3.send(
                     new DeleteObjectsCommand({
                         Bucket: bucketName,
                         Delete: {

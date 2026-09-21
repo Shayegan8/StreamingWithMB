@@ -21,7 +21,6 @@ const justForDelete = new S3Client({
             keepAlive: true,
             keepAliveMsecs: 5000,
             maxSockets: 128,
-            maxFreeSockets: 32,
             timeout: 30000,
             scheduling: 'lifo'
         })
@@ -41,7 +40,6 @@ const s3g = new S3Client({
             keepAlive: true,
             keepAliveMsecs: 30_000,
             maxSockets: 2048,
-            maxFreeSockets: 256,
             timeout: 60_000,
             scheduling: 'lifo'
         })
@@ -192,33 +190,19 @@ const server = net.createServer((socket) => {
                 logger(`CMD: ${Buffer.from(data[1]!.toString()).toString('binary')}`, "info")
                 switch (data[1]) { // cmd
                     case 0x01: // CONNECT
-                        let connectionID = crypto.randomUUID()
-                        logger("Informing for " + connectionID, "info")
-                        const msg = Buffer.from(`${DSTADDR},${DSTPORT},${connectionID},${ATYP}`, 'binary')
-                        const iv = crypto.randomBytes(12)
-                        const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
-                        const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
-                        const tag = cipher.getAuthTag()
-                        if (conn)
-                            await conn.lpush(`inform`, Buffer.concat([iv, tag, encryptedMsg]))
-                        else {
-                            const key = crypto.randomBytes(10).toString('hex')
-                            logger("Seems like we are sending inform WITH THIS HASH " + key)
-                            await s3g.send(new PutObjectCommand({
-                                Bucket: bucketName,
-                                Key: `informs/${key}`,
-                                ACL: 'private',
-                                Body: Buffer.concat([iv, tag, encryptedMsg]),
-                            })).catch((reason) => {
-                                logger(`Problem with pushing inform ${reason}`, "error")
-                            })
-                            logger("Seems like sending inform got passed")
-                        }
                         let pqueue = new PQueue({ concurrency: 1 })
                         let buff: Buffer[] = []
                         let timejerk: NodeJS.Timeout
                         let rtt = 0
+
+
+                        let max = 2 * 1024 * 1024
+                        let inSeq = "0"
+                        const pqueueMax = new PQueue({ concurrency: 1 })
+                        let sent = false
+                        let inatervo: NodeJS.Timeout | null
                         socket.on('data', (data: Buffer) => {
+                            logger("Data arriveeed??")
                             if (timejerk)
                                 clearTimeout(timejerk)
                             pqueue.add(() => {
@@ -287,12 +271,44 @@ const server = net.createServer((socket) => {
                                 })
                             }, 100)
                         })
+                        let connectionID = crypto.randomUUID()
+                        const server_reply = Buffer.alloc(10)
+                        server_reply[0] = 0x05 // VER
+                        server_reply[1] = 0x00 // REP
+                        server_reply[2] = 0x00 // RSV
+                        server_reply[3] = 0x01
+                        // dummy bound address, its tough to receive this
+                        server_reply[4] = 0
+                        server_reply[5] = 0
+                        server_reply[6] = 0
+                        server_reply[7] = 0
+                        // dummy port
+                        server_reply[8] = 0
+                        server_reply[9] = 0
+                        socket.write(server_reply)
+                        logger(`CONNECT done for ${connectionID} with ${DSTADDR} destination`, "info")
 
-                        let max = 2 * 1024 * 1024
-                        let inSeq = "0"
-                        const pqueueMax = new PQueue({ concurrency: 1 })
-                        let sent = false
-                        let inatervo: NodeJS.Timeout | null
+                        logger("Informing for " + connectionID, "info")
+                        const msg = Buffer.from(`${DSTADDR},${DSTPORT},${connectionID},${ATYP}`, 'binary')
+                        const iv = crypto.randomBytes(12)
+                        const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
+                        const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
+                        const tag = cipher.getAuthTag()
+                        if (conn)
+                            await conn.lpush(`inform`, Buffer.concat([iv, tag, encryptedMsg]))
+                        else {
+                            const key = crypto.randomBytes(10).toString('hex')
+                            logger("Seems like we are sending inform WITH THIS HASH " + key)
+                            await s3g.send(new PutObjectCommand({
+                                Bucket: bucketName,
+                                Key: `informs/${key}`,
+                                ACL: 'private',
+                                Body: Buffer.concat([iv, tag, encryptedMsg]),
+                            })).catch((reason) => {
+                                logger(`Problem with pushing inform ${reason}`, "error")
+                            })
+                            logger("Seems like sending inform got passed")
+                        }
                         if (config.ackS3 || mode != "s3") {
                             inatervo = setInterval(async () => {
                                 if (!sent) {
@@ -322,21 +338,6 @@ const server = net.createServer((socket) => {
                                 }
                             }, 100)
                         }
-                        const server_reply = Buffer.alloc(10)
-                        server_reply[0] = 0x05 // VER
-                        server_reply[1] = 0x00 // REP
-                        server_reply[2] = 0x00 // RSV
-                        server_reply[3] = 0x01
-                        // dummy bound address, its tough to receive this
-                        server_reply[4] = 0
-                        server_reply[5] = 0
-                        server_reply[6] = 0
-                        server_reply[7] = 0
-                        // dummy port
-                        server_reply[8] = 0
-                        server_reply[9] = 0
-                        socket.write(server_reply)
-                        logger(`CONNECT done for ${connectionID} with ${DSTADDR} destination`, "info")
                         let blconn: Redis | null
                         const ctl = new AbortController()
                         if (mode != "s3")
@@ -404,7 +405,7 @@ const server = net.createServer((socket) => {
                                     try {
                                         await s3g.send(new PutObjectCommand({
                                             Bucket: bucketName,
-                                            Key: `proxy,${connectionID}/${inSeq}`,
+                                            Key: `appserver,${connectionID}/${inSeq}`,
                                             ACL: 'private',
                                             Body: Buffer.concat([iv, tag, encryptedMsg]),
                                         }))
@@ -483,7 +484,7 @@ const server = net.createServer((socket) => {
 
                                                 await s3g.send(new PutObjectCommand({
                                                     Bucket: bucketName,
-                                                    Key: `proxy,${connectionID}/${inSeq}`,
+                                                    Key: `appserver,${connectionID}/${inSeq}`,
                                                     ACL: 'private',
                                                     Body: Buffer.concat([iv, tag, encryptedMsg]),
                                                 }))
@@ -559,7 +560,7 @@ const server = net.createServer((socket) => {
 
                                                 await s3g.send(new PutObjectCommand({
                                                     Bucket: bucketName,
-                                                    Key: `proxy,${connectionID}/${inSeq}`,
+                                                    Key: `appserver,${connectionID}/${inSeq}`,
                                                     ACL: 'private',
                                                     Body: Buffer.concat([iv, tag, encryptedMsg]),
                                                 }))
@@ -604,7 +605,7 @@ const server = net.createServer((socket) => {
 
                                                 await s3g.send(new PutObjectCommand({
                                                     Bucket: bucketName,
-                                                    Key: `proxy,${connectionID}/${inSeq}`,
+                                                    Key: `appserver,${connectionID}/${inSeq}`,
                                                     ACL: 'private',
                                                     Body: Buffer.concat([iv, tag, encryptedMsg]),
                                                 }))
