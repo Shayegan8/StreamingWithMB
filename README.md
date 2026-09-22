@@ -25,7 +25,9 @@ Sample config
     "endpointUrl": "your s3 object storage url here",
     "zone": "the zone",
     "ackS3": false,
-    "bucket": "and your bucket"
+    "bucket": "and your bucket",
+    "pathstyle": true, // Just if you want add the bucket name like a url path at the end
+    "deleteManual": true // If your endpoint dosent support DeleteObjects command you need this
 }
 ```
 

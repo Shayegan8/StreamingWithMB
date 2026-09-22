@@ -200,6 +200,7 @@ async function getFastestIP(address: string, port: number): Promise<string | nul
 }
 
 function logger(param: string, type?: string) {
+    return
     const date = new Date(Date.now())
     console.log(type == "info" ? `[\x1b[33mINFO\x1b[0m] [\x1b[32m${mode}\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}`
         : (type == "error" ? `[\x1b[31mERR\x1b[0m] [\x1b[32m${mode}\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}` : param))
