@@ -9,8 +9,6 @@ import https from 'https'
 
 const mode = config.mode
 
-logger("Config path style is " + config.pathstyle)
-
 const justForDelete = config.pathstyle ? new S3Client({
     region: config.zone,
     endpoint: config.endpointUrl,
@@ -53,7 +51,6 @@ const justForDelete = config.pathstyle ? new S3Client({
     retryMode: 'adaptive',
     maxAttempts: 8
 })
-
 
 const s3g = config.pathstyle ? new S3Client({
     region: config.zone,
@@ -114,14 +111,43 @@ if (mode == "s3")
                     if (data2.Contents && data2.Contents.length != 0) {
                         for (const element of data2.Contents)
                             sagjerk2.push({ Key: element.Key! })
-                        await justForDelete.send(
-                            new DeleteObjectsCommand({
-                                Bucket: bucketName,
-                                Delete: {
-                                    Objects: sagjerk2,
-                                },
-                            })
-                        )
+                        if (!config.deleteManual) {
+                            try {
+                                await justForDelete.send(
+                                    new DeleteObjectsCommand({
+                                        Bucket: bucketName,
+                                        Delete: {
+                                            Objects: sagjerk2,
+                                        },
+                                    })
+                                )
+                            } catch (e) {
+                                logger("Failed to delete with DeleteObjectsCommand trying with DeleteObject", "info")
+                                try {
+                                    await Promise.all(sagjerk2.map(async (key) => {
+                                        await justForDelete.send(new DeleteObjectCommand({
+                                            Bucket: bucketName,
+                                            Key: key.Key
+                                        }))
+                                    }))
+                                } catch (e) {
+                                    logger("Ok this failed too? why?")
+                                    logger(e as any)
+                                }
+                            }
+                        } else {
+                            try {
+                                await Promise.all(sagjerk2.map(async (key) => {
+                                    await justForDelete.send(new DeleteObjectCommand({
+                                        Bucket: bucketName,
+                                        Key: key.Key
+                                    }))
+                                }))
+                            } catch (e) {
+                                logger("Ok this failed too? why?")
+                                logger(e as any)
+                            }
+                        }
                     }
                 } catch (e) {
                     logger(`failed to delete ${connectionID}: ${e}`, "error")
@@ -699,24 +725,41 @@ process.on('SIGTERM', async () => {
             if (data.Contents && data.Contents.length != 0) {
                 for (const element of data.Contents)
                     sagjerk.push({ Key: element.Key! })
-                try {
-                    await justForDelete.send(
-                        new DeleteObjectsCommand({
-                            Bucket: bucketName,
-                            Delete: {
-                                Objects: sagjerk,
-                            },
-                        })
-                    )
-                } catch (e) {
-                    for (const key of sagjerk) {
-                        logger("Fallback for deletion", "info")
+                if (!config.deleteManual) {
+                    try {
                         await justForDelete.send(
-                            new DeleteObjectCommand({
+                            new DeleteObjectsCommand({
                                 Bucket: bucketName,
-                                Key: key.Key
+                                Delete: {
+                                    Objects: sagjerk,
+                                },
                             })
                         )
+                    } catch (e) {
+                        logger("Failed to delete with DeleteObjectsCommand trying with DeleteObject", "info")
+                        try {
+                            await Promise.all(sagjerk.map(async (key) => {
+                                await justForDelete.send(new DeleteObjectCommand({
+                                    Bucket: bucketName,
+                                    Key: key.Key
+                                }))
+                            }))
+                        } catch (e) {
+                            logger("Ok this failed too? why?")
+                            logger(e as any)
+                        }
+                    }
+                } else {
+                    try {
+                        await Promise.all(sagjerk.map(async (key) => {
+                            await justForDelete.send(new DeleteObjectCommand({
+                                Bucket: bucketName,
+                                Key: key.Key
+                            }))
+                        }))
+                    } catch (e) {
+                        logger("Ok this failed too? why?")
+                        logger(e as any)
                     }
                 }
             }
@@ -726,7 +769,6 @@ process.on('SIGTERM', async () => {
     }
     logger("Removing chunks completed", "info")
     exit(0)
-
 })
 
 process.on('SIGINT', async () => {
@@ -745,24 +787,41 @@ process.on('SIGINT', async () => {
             if (data.Contents && data.Contents.length != 0) {
                 for (const element of data.Contents)
                     sagjerk.push({ Key: element.Key! })
-                try {
-                    await justForDelete.send(
-                        new DeleteObjectsCommand({
-                            Bucket: bucketName,
-                            Delete: {
-                                Objects: sagjerk,
-                            },
-                        })
-                    )
-                } catch (e) {
-                    for (const key of sagjerk) {
-                        logger("Fallback for deletion", "info")
+                if (!config.deleteManual) {
+                    try {
                         await justForDelete.send(
-                            new DeleteObjectCommand({
+                            new DeleteObjectsCommand({
                                 Bucket: bucketName,
-                                Key: key.Key
+                                Delete: {
+                                    Objects: sagjerk,
+                                },
                             })
                         )
+                    } catch (e) {
+                        logger("Failed to delete with DeleteObjectsCommand trying with DeleteObject", "info")
+                        try {
+                            await Promise.all(sagjerk.map(async (key) => {
+                                await justForDelete.send(new DeleteObjectCommand({
+                                    Bucket: bucketName,
+                                    Key: key.Key
+                                }))
+                            }))
+                        } catch (e) {
+                            logger("Ok this failed too? why?")
+                            logger(e as any)
+                        }
+                    }
+                } else {
+                    try {
+                        await Promise.all(sagjerk.map(async (key) => {
+                            await justForDelete.send(new DeleteObjectCommand({
+                                Bucket: bucketName,
+                                Key: key.Key
+                            }))
+                        }))
+                    } catch (e) {
+                        logger("Ok this failed too? why?")
+                        logger(e as any)
                     }
                 }
             }
