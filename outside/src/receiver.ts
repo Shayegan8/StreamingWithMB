@@ -662,7 +662,7 @@ setImmediate(async () => {
                         await new Promise(r => setTimeout(r, 500))
                         continue
                     }
-                    await Promise.all(ls.map(async (key) => {
+                    Promise.all(ls.map(async (key) => {
                         try {
                             logger("OK HERE!")
                             const daljerk = await s32.send(new GetObjectCommand({
@@ -691,7 +691,7 @@ setImmediate(async () => {
                     let sagjerk = data.Contents!.map((each) => each.Key!)
 
                     try {
-                        await Promise.all(sagjerk.map(async (key) => {
+                        Promise.all(sagjerk.map(async (key) => {
                             try {
                                 logger("OK HERE!")
                                 const daljerk = await s32.send(new GetObjectCommand({
