@@ -219,7 +219,7 @@ async function popperBuffer2(key: string, connectionID: string, ctl: AbortContro
             logger("Im getting this mother fucker so bad " + key)
             const data = await s3.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
             toDelete.push(connectionID)
-            const bod = await data.Body?.transformToByteArray()!
+            const bod = await data.Body!.transformToByteArray()
             const extractIv = bod.subarray(0, 12)
             const tag = bod.subarray(12, 28)
             const encryptedChunk = bod.subarray(28)
@@ -246,9 +246,11 @@ async function popperBuffer2(key: string, connectionID: string, ctl: AbortContro
 
 const callback = (payload: Uint8Array<ArrayBufferLike>) => {
     setImmediate(async () => {
+        logger("Subarjerk")
         const extractIv = payload.subarray(0, 12)
         const tag = payload.subarray(12, 28)
         const encryptedChunk = payload.subarray(28)
+        logger("Subarjerk after")
         const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
         decipher.setAuthTag(tag)
         const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
@@ -372,7 +374,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 } else if (config.ackS3) {
                     buffered = await popperBuffer2(`ack,${connectionID}`, connectionID, aborti)
                 }
-                if (!buffered && config.ackS3) {
+                if (!buffered) {
                     logger("Buffered issue")
                     sockets.get(connectionID)?.socket?.end()
                     sockets.delete(connectionID)
@@ -597,7 +599,8 @@ setImmediate(async () => {
         try {
             if (blconn) {
                 logger("SOMEHOW?")
-                callback((await blconn.brpopBuffer(`inform`, 20))?.[1]!)
+                const payload = await blconn.brpopBuffer(`inform`, 20)
+                callback(payload?.[1]!)
             } else {
                 const data = await s32.send(new ListObjectsV2Command({
                     Bucket: bucketName,
