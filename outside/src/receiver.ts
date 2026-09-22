@@ -200,7 +200,6 @@ async function getFastestIP(address: string, port: number): Promise<string | nul
 }
 
 function logger(param: string, type?: string) {
-    return
     const date = new Date(Date.now())
     console.log(type == "info" ? `[\x1b[33mINFO\x1b[0m] [\x1b[32m${mode}\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}`
         : (type == "error" ? `[\x1b[31mERR\x1b[0m] [\x1b[32m${mode}\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}` : param))
@@ -220,10 +219,24 @@ async function popperBuffer2(key: string, connectionID: string, ctl: AbortContro
             logger("Im getting this mother fucker so bad " + key)
             const data = await s3.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
             toDelete.push(connectionID)
+            const bod = await data.Body?.transformToByteArray()!
+            const extractIv = bod.subarray(0, 12)
+            const tag = bod.subarray(12, 28)
+            const encryptedChunk = bod.subarray(28)
+            const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
+            decipher.setAuthTag(tag)
+            const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
+            const realMsg = decryptedChunk.subarray(10)
+            if (!Buffer.from('end', 'binary').compare(realMsg)) {
+                sockets.delete(connectionID)
+                toDelete.push(connectionID)
+                ctl.abort()
+                break
+            }
             logger(`It took me ${Date.now() - dangoz}ms to actually receive this`)
             logger("Fucked?")
-            return await data.Body!.transformToByteArray()
-        } catch {
+            return bod
+        } catch (e) {
             await new Promise(r => setTimeout(r, delay))
             delay = Math.min(delay * 2, 500)
         }

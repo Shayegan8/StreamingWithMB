@@ -461,7 +461,7 @@ const server = net.createServer((socket) => {
                                 if (conn) {
                                     conn.del(`ack,${connectionID}`)
                                     conn.del(`appserver,${connectionID}`)
-                                    await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                    await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                 } else {
                                     if (config.ackS3)
                                         await s3g.send(
@@ -474,7 +474,7 @@ const server = net.createServer((socket) => {
                                     try {
                                         await s3g.send(new PutObjectCommand({
                                             Bucket: bucketName,
-                                            Key: `appserver,${connectionID}/${inSeq}`,
+                                            Key: `proxy,${connectionID}/${inSeq}`,
                                             ACL: 'private',
                                             Body: Buffer.concat([iv, tag, encryptedMsg]),
                                         }))
@@ -537,7 +537,7 @@ const server = net.createServer((socket) => {
                                         if (conn) {
                                             conn.del(`ack,${connectionID}`)
                                             conn.del(`appserver,${connectionID}`)
-                                            await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                            await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                         } else {
                                             try {
                                                 if (config.ackS3)
@@ -550,7 +550,7 @@ const server = net.createServer((socket) => {
 
                                                 await s3g.send(new PutObjectCommand({
                                                     Bucket: bucketName,
-                                                    Key: `appserver,${connectionID}/${inSeq}`,
+                                                    Key: `proxy,${connectionID}/${inSeq}`,
                                                     ACL: 'private',
                                                     Body: Buffer.concat([iv, tag, encryptedMsg]),
                                                 }))
