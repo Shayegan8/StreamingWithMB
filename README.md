@@ -27,7 +27,8 @@ Sample config
     "ackS3": false,
     "bucket": "and your bucket",
     "pathstyle": true, // Just if you want add the bucket name like a url path at the end
-    "deleteManual": true // If your endpoint dosent support DeleteObjects command you need this
+    "deleteManual": true, // If your endpoint dosent support DeleteObjects command you need this
+    "minimalClient": true, // If you want a client dont restrict http calls and manage open sockets and etc or your provider dosent support new sdks you need this 
 }
 ```
 

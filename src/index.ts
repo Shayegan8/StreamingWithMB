@@ -78,7 +78,8 @@ if (mode == "s3")
                     if (config.minimalClient) {
                         const ls = await Array.fromAsync(sclient.listObjects({ prefix: `appserver,${connectionID}/` }), (entry) => entry.key)
                         if (!ls.length) {
-                            return
+                            logger(`Nothing to delete`, "info")
+                            continue
                         }
                         await Promise.all(ls.map(async key => await toDeletePQueue.add(async () => await sclient.deleteObject(key))))
                     } else {
@@ -194,7 +195,6 @@ const popperBuffer = async (key: string, connectionID: string, abrt: AbortContro
                 break
             }
             toDelete.add(connectionID)
-            logger(`Batch received for ${key}`, "info")
             let bod: Uint8Array<ArrayBufferLike>
             if (config.minimalClient) {
                 const data = await sclient.getObject(key)
@@ -203,6 +203,7 @@ const popperBuffer = async (key: string, connectionID: string, abrt: AbortContro
                 const data = await s3g.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
                 bod = await data.Body!.transformToByteArray()
             }
+            logger(`Batch received for ${key}`, "info")
             const extractIv = bod.subarray(0, 12)
             const tag = bod.subarray(12, 28)
             const encryptedChunk = bod.subarray(28)

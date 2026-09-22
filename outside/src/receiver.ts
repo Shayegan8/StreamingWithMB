@@ -101,8 +101,8 @@ if (mode == "s3")
                     if (config.minimalClient) {
                         const ls = await Array.fromAsync(sclient.listObjects({ prefix: `proxy,${connectionID}/` }), (entry) => entry.key)
                         if (!ls.length) {
-                            logger(`failed to delete ${connectionID}`, "error")
-                            return
+                            logger(`Nothing to delete`, "info")
+                            continue
                         }
                         await Promise.all(ls.map(async key => await toDeletePQueue.add(async () => await sclient.deleteObject(key))))
                     } else {
