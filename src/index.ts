@@ -3,13 +3,23 @@ import crypto from 'crypto'
 import { exit } from 'process'
 import { Redis } from 'ioredis'
 import PQueue from 'p-queue'
-import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import config from "../config.json" with {type: 'json'}
+import { S3Client as S3Light } from '@bradenmacdonald/s3-lite-client'
+import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import https from 'https'
 
 const mode = config.mode
 
-const justForDelete = config.pathstyle ? new S3Client({
+const sclient = new S3Light({
+    endPoint: config.endpointUrl,
+    region: config.zone,
+    accessKey: config.accessKey,
+    bucket: config.bucket,
+    pathStyle: config.pathstyle,
+    secretKey: config.secretKey
+})
+
+const justForDelete = new S3Client({
     region: config.zone,
     endpoint: config.endpointUrl,
     credentials: {
@@ -29,30 +39,10 @@ const justForDelete = config.pathstyle ? new S3Client({
     },
     retryMode: 'adaptive',
     maxAttempts: 8,
-    forcePathStyle: true
-}) : new S3Client({
-    region: config.zone,
-    endpoint: config.endpointUrl,
-    credentials: {
-        accessKeyId: config.accessKey,
-        secretAccessKey: config.secretKey,
-    },
-    requestHandler: {
-        httpsAgent: new https.Agent({
-            keepAlive: true,
-            keepAliveMsecs: 30_000,
-            maxSockets: 512,
-            maxFreeSockets: 256,
-            timeout: 60_000,
-        }),
-        connectionTimeout: 5_000,
-        socketTimeout: 60_000
-    },
-    retryMode: 'adaptive',
-    maxAttempts: 8
+    forcePathStyle: config.pathstyle
 })
 
-const s3g = config.pathstyle ? new S3Client({
+const s3g = new S3Client({
     region: config.zone,
     endpoint: config.endpointUrl,
     credentials: {
@@ -72,57 +62,60 @@ const s3g = config.pathstyle ? new S3Client({
     },
     retryMode: 'adaptive',
     maxAttempts: 8,
-    forcePathStyle: true
-}) : new S3Client({
-    region: config.zone,
-    endpoint: config.endpointUrl,
-    credentials: {
-        accessKeyId: config.accessKey,
-        secretAccessKey: config.secretKey,
-    },
-    requestHandler: {
-        httpsAgent: new https.Agent({
-            keepAlive: true,
-            keepAliveMsecs: 30_000,
-            maxSockets: 512,
-            maxFreeSockets: 256,
-            timeout: 60_000,
-        }),
-        connectionTimeout: 5_000,
-        socketTimeout: 60_000
-    },
-    retryMode: 'adaptive',
-    maxAttempts: 8
+    forcePathStyle: config.pathstyle
 })
 
-let toDelete: string[] = []
+logger("Path style: " + config.pathstyle)
+
+let toDelete = new Set<string>()
+let toDeletePQueue = new PQueue({ concurrency: 100 })
 if (mode == "s3")
     setInterval(async () => {
         const toDeleteCopy = toDelete
-        if (toDeleteCopy.length != 0) {
+        if (toDeleteCopy.size != 0) {
             for (const connectionID of toDelete) {
                 try {
-                    const data2 = await justForDelete.send(new ListObjectsV2Command({
-                        Bucket: bucketName,
-                        Prefix: `appserver,${connectionID}/`,
-                    }))
+                    if (config.minimalClient) {
+                        const ls = await Array.fromAsync(sclient.listObjects({ prefix: `appserver,${connectionID}/` }), (entry) => entry.key)
+                        if (!ls.length) {
+                            return
+                        }
+                        await Promise.all(ls.map(async key => await toDeletePQueue.add(async () => await sclient.deleteObject(key))))
+                    } else {
+                        const data2 = await justForDelete.send(new ListObjectsV2Command({
+                            Bucket: bucketName,
+                            Prefix: `appserver,${connectionID}/`,
+                        }))
 
-                    const sagjerk2: { Key: string }[] = []
-                    if (data2.Contents && data2.Contents.length != 0) {
-                        for (const element of data2.Contents)
-                            sagjerk2.push({ Key: element.Key! })
-                        if (!config.deleteManual) {
-                            try {
-                                await justForDelete.send(
-                                    new DeleteObjectsCommand({
-                                        Bucket: bucketName,
-                                        Delete: {
-                                            Objects: sagjerk2,
-                                        },
-                                    })
-                                )
-                            } catch (e) {
-                                logger("Failed to delete with DeleteObjectsCommand trying with DeleteObject", "info")
+                        const sagjerk2: { Key: string }[] = []
+                        if (data2.Contents && data2.Contents.length != 0) {
+                            for (const element of data2.Contents)
+                                sagjerk2.push({ Key: element.Key! })
+                            if (!config.deleteManual) {
+                                try {
+                                    await justForDelete.send(
+                                        new DeleteObjectsCommand({
+                                            Bucket: bucketName,
+                                            Delete: {
+                                                Objects: sagjerk2,
+                                            },
+                                        })
+                                    )
+                                } catch (e) {
+                                    logger("Failed to delete with DeleteObjectsCommand trying with DeleteObject", "info")
+                                    try {
+                                        await Promise.all(sagjerk2.map(async (key) => {
+                                            await justForDelete.send(new DeleteObjectCommand({
+                                                Bucket: bucketName,
+                                                Key: key.Key
+                                            }))
+                                        }))
+                                    } catch (e) {
+                                        logger("Ok this failed too? why?")
+                                        logger(e as any)
+                                    }
+                                }
+                            } else {
                                 try {
                                     await Promise.all(sagjerk2.map(async (key) => {
                                         await justForDelete.send(new DeleteObjectCommand({
@@ -135,25 +128,13 @@ if (mode == "s3")
                                     logger(e as any)
                                 }
                             }
-                        } else {
-                            try {
-                                await Promise.all(sagjerk2.map(async (key) => {
-                                    await justForDelete.send(new DeleteObjectCommand({
-                                        Bucket: bucketName,
-                                        Key: key.Key
-                                    }))
-                                }))
-                            } catch (e) {
-                                logger("Ok this failed too? why?")
-                                logger(e as any)
-                            }
                         }
                     }
                 } catch (e) {
                     logger(`failed to delete ${connectionID}: ${e}`, "error")
                 }
             }
-            toDelete = []
+            toDelete.clear()
         }
     }, 10000)
 
@@ -208,12 +189,33 @@ const popperBuffer = async (key: string, connectionID: string, abrt: AbortContro
     let delay = 20
     for (let i = 0; i < 200; i++) {
         try {
-            if (abrt.signal.aborted)
+            if (abrt.signal.aborted) {
+                toDelete.add(connectionID)
                 break
-            const data = await s3g.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
-            toDelete.push(connectionID)
+            }
+            toDelete.add(connectionID)
             logger(`Batch received for ${key}`, "info")
-            return await data.Body!.transformToByteArray()
+            let bod: Uint8Array<ArrayBufferLike>
+            if (config.minimalClient) {
+                const data = await sclient.getObject(key)
+                bod = new Uint8Array(await data.arrayBuffer())
+            } else {
+                const data = await s3g.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
+                bod = await data.Body!.transformToByteArray()
+            }
+            const extractIv = bod.subarray(0, 12)
+            const tag = bod.subarray(12, 28)
+            const encryptedChunk = bod.subarray(28)
+            const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
+            decipher.setAuthTag(tag)
+            const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
+            const realMsg = decryptedChunk.subarray(10)
+            if (!Buffer.from('end', 'binary').compare(realMsg)) {
+                toDelete.add(connectionID)
+                abrt.abort()
+                break
+            }
+            return bod
         } catch (e) {
             await new Promise(r => setTimeout(r, 500))
             delay = Math.min(delay * 2, 500)
@@ -308,14 +310,20 @@ const server = net.createServer((socket) => {
                                         await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                     } else {
                                         rtt = Date.now()
-                                        await s3g.send(new PutObjectCommand({
-                                            Bucket: bucketName,
-                                            Key: `proxy,${connectionID}/${inSeq}`,
-                                            ACL: 'private',
-                                            Body: Buffer.concat([iv, tag, encryptedMsg]),
-                                        })).catch((reason) => {
-                                            logger(`Problem with pushing batch after informing ${reason}`, "error")
-                                        })
+                                        if (config.minimalClient) {
+                                            await sclient.putObject(`proxy,${connectionID}/${inSeq}`, Buffer.concat([iv, tag, encryptedMsg])).catch((reason) => {
+                                                logger(`Problem with pushing batch after informing ${reason}`, "error")
+                                            })
+                                        } else {
+                                            await s3g.send(new PutObjectCommand({
+                                                Bucket: bucketName,
+                                                Key: `proxy,${connectionID}/${inSeq}`,
+                                                ACL: 'private',
+                                                Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                            })).catch((reason) => {
+                                                logger(`Problem with pushing batch after informing ${reason}`, "error")
+                                            })
+                                        }
                                         logger(`It took ${Date.now() - rtt}ms for pushing batch`, "info")
                                         inSeq = newVersion!.toString('hex')
                                     }
@@ -332,14 +340,20 @@ const server = net.createServer((socket) => {
                                                 rtt = Date.now()
                                                 await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
                                             } else {
-                                                await s3g.send(new PutObjectCommand({
-                                                    Bucket: bucketName,
-                                                    Key: `ack,${connectionID}`,
-                                                    ACL: 'private',
-                                                    Body: Buffer.concat([ivACK, tagACK, encryptedMsgACK]),
-                                                })).catch((reason) => {
-                                                    logger(`Problem with pushing ack after informing ${reason}`, "error")
-                                                })
+                                                if (config.minimalClient) {
+                                                    await sclient.putObject(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK])).catch((reason) => {
+                                                        logger(`Problem with pushing batch after informing ${reason}`, "error")
+                                                    })
+                                                } else {
+                                                    await s3g.send(new PutObjectCommand({
+                                                        Bucket: bucketName,
+                                                        Key: `ack,${connectionID}`,
+                                                        ACL: 'private',
+                                                        Body: Buffer.concat([ivACK, tagACK, encryptedMsgACK]),
+                                                    })).catch((reason) => {
+                                                        logger(`Problem with pushing batch after informing ${reason}`, "error")
+                                                    })
+                                                }
                                             }
                                         })
                                 })
@@ -372,14 +386,20 @@ const server = net.createServer((socket) => {
                             await conn.lpush(`inform`, Buffer.concat([iv, tag, encryptedMsg]))
                         else {
                             const key = crypto.randomBytes(10).toString('hex')
-                            await s3g.send(new PutObjectCommand({
-                                Bucket: bucketName,
-                                Key: `informs/${key}`,
-                                ACL: 'private',
-                                Body: Buffer.concat([iv, tag, encryptedMsg]),
-                            })).catch((reason) => {
-                                logger(`Problem with pushing inform ${reason}`, "error")
-                            })
+                            if (config.minimalClient) {
+                                await sclient.putObject(`informs/${key}`, Buffer.concat([iv, tag, encryptedMsg])).catch((reason) => {
+                                    logger(`Problem with pushing inform ${reason}`, "error")
+                                })
+                            } else {
+                                await s3g.send(new PutObjectCommand({
+                                    Bucket: bucketName,
+                                    Key: `informs/${key}`,
+                                    ACL: 'private',
+                                    Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                })).catch((reason) => {
+                                    logger(`Problem with pushing batch after informing ${reason}`, "error")
+                                })
+                            }
                         }
                         if (config.ackS3 || mode != "s3") {
                             inatervo = setInterval(async () => {
@@ -395,14 +415,20 @@ const server = net.createServer((socket) => {
                                         if (conn)
                                             await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
                                         else {
-                                            await s3g.send(new PutObjectCommand({
-                                                Bucket: bucketName,
-                                                Key: `ack,${connectionID}`,
-                                                ACL: 'private',
-                                                Body: Buffer.concat([ivACK, tagACK, encryptedMsgACK]),
-                                            })).catch((reason) => {
-                                                logger(`Problem with pushing ack after informing ${reason}`, "error")
-                                            })
+                                            if (config.minimalClient) {
+                                                await sclient.putObject(`ack,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg])).catch((reason) => {
+                                                    logger(`Problem with pushing inform ${reason}`, "error")
+                                                })
+                                            } else {
+                                                await s3g.send(new PutObjectCommand({
+                                                    Bucket: bucketName,
+                                                    Key: `ack,${connectionID}`,
+                                                    ACL: 'private',
+                                                    Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                                })).catch((reason) => {
+                                                    logger(`Problem with pushing ack after informing ${reason}`, "error")
+                                                })
+                                            }
                                         }
                                     })
                                 }
@@ -463,36 +489,39 @@ const server = net.createServer((socket) => {
                                     conn.del(`appserver,${connectionID}`)
                                     await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                 } else {
-                                    if (config.ackS3)
-                                        await s3g.send(
-                                            new DeleteObjectCommand({
-                                                Bucket: bucketName,
-                                                Key: `ack,${connectionID}`,
-                                            })
-                                        )
-
+                                    toDelete.add(connectionID)
                                     try {
-                                        await s3g.send(new PutObjectCommand({
-                                            Bucket: bucketName,
-                                            Key: `proxy,${connectionID}/${inSeq}`,
-                                            ACL: 'private',
-                                            Body: Buffer.concat([iv, tag, encryptedMsg]),
-                                        }))
-
-                                        toDelete.push(connectionID)
+                                        if (config.minimalClient) {
+                                            if (config.ackS3)
+                                                await sclient.deleteObject(`ack,${connectionID}`)
+                                            await sclient.putObject(`proxy,${connectionID}/${inSeq}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                        } else {
+                                            if (config.ackS3)
+                                                await s3g.send(
+                                                    new DeleteObjectCommand({
+                                                        Bucket: bucketName,
+                                                        Key: `ack,${connectionID}`,
+                                                    })
+                                                )
+                                            await s3g.send(new PutObjectCommand({
+                                                Bucket: bucketName,
+                                                Key: `proxy,${connectionID}/${inSeq}`,
+                                                ACL: 'private',
+                                                Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                            }))
+                                        }
                                     } catch (e) {
-                                        toDelete.push(connectionID)
                                         logger("Problem with s3g " + e, "error")
                                     }
+                                    if (pinger)
+                                        clearInterval(pinger)
+                                    if (inatervo)
+                                        clearInterval(inatervo)
+                                    clearImmediate(imedo)
+                                    ctl.abort()
+                                    if (blconn)
+                                        blconn.quit().catch(() => { })
                                 }
-                                if (pinger)
-                                    clearInterval(pinger)
-                                if (inatervo)
-                                    clearInterval(inatervo)
-                                clearImmediate(imedo)
-                                ctl.abort()
-                                if (blconn)
-                                    blconn.quit().catch(() => { })
                             })
                         })
 
@@ -513,7 +542,7 @@ const server = net.createServer((socket) => {
                         const imedo = setImmediate(async () => {
                             while (!ctl.signal.aborted) {
                                 try {
-                                    let response: Uint8Array<ArrayBufferLike> | undefined
+                                    let response: ArrayBuffer | Uint8Array<ArrayBufferLike> | undefined
                                     if (blconn)
                                         response = (await blconn.brpopBuffer(`appserver,${connectionID}`, 20))?.[1]
                                     else {
@@ -528,7 +557,6 @@ const server = net.createServer((socket) => {
                                         clearImmediate(imedo)
                                         if (blconn)
                                             blconn.quit().catch(() => { })
-                                        socket.end()
                                         const msg = Buffer.from('end', 'binary')
                                         const iv = crypto.randomBytes(12)
                                         const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
@@ -540,26 +568,33 @@ const server = net.createServer((socket) => {
                                             await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                         } else {
                                             try {
-                                                if (config.ackS3)
-                                                    await s3g.send(
-                                                        new DeleteObjectCommand({
-                                                            Bucket: bucketName,
-                                                            Key: `ack,${connectionID}`,
-                                                        })
-                                                    )
+                                                toDelete.add(connectionID)
+                                                if (config.minimalClient) {
+                                                    if (config.ackS3)
+                                                        await sclient.deleteObject(`ack,${connectionID}`)
+                                                    await sclient.putObject(`proxy,${connectionID}/${inSeq}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                                } else {
+                                                    if (config.ackS3)
+                                                        await s3g.send(
+                                                            new DeleteObjectCommand({
+                                                                Bucket: bucketName,
+                                                                Key: `ack,${connectionID}`,
+                                                            })
+                                                        )
 
-                                                await s3g.send(new PutObjectCommand({
-                                                    Bucket: bucketName,
-                                                    Key: `proxy,${connectionID}/${inSeq}`,
-                                                    ACL: 'private',
-                                                    Body: Buffer.concat([iv, tag, encryptedMsg]),
-                                                }))
-                                                toDelete.push(connectionID)
+                                                    await s3g.send(new PutObjectCommand({
+                                                        Bucket: bucketName,
+                                                        Key: `proxy,${connectionID}/${inSeq}`,
+                                                        ACL: 'private',
+                                                        Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                                    }))
+                                                }
                                             } catch (e) {
-                                                toDelete.push(connectionID)
                                                 logger("Problem with s3g " + e, "error")
                                             }
                                         }
+                                        toDelete.add(connectionID)
+                                        ctl.abort()
                                         socket.end()
                                         break
                                     }
@@ -610,27 +645,31 @@ const server = net.createServer((socket) => {
                                         if (conn) {
                                             conn.del(`ack,${connectionID}`)
                                             conn.del(`appserver,${connectionID}`)
-                                            await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                            await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                         } else {
                                             try {
-                                                if (config.ackS3)
-                                                    await s3g.send(
-                                                        new DeleteObjectCommand({
-                                                            Bucket: bucketName,
-                                                            Key: `ack,${connectionID}`,
-                                                        })
-                                                    )
+                                                toDelete.add(connectionID)
+                                                if (config.minimalClient) {
+                                                    if (config.ackS3)
+                                                        await sclient.deleteObject(`ack,${connectionID}`)
+                                                    await sclient.putObject(`proxy,${connectionID}/${inSeq}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                                } else {
+                                                    if (config.ackS3)
+                                                        await s3g.send(
+                                                            new DeleteObjectCommand({
+                                                                Bucket: bucketName,
+                                                                Key: `ack,${connectionID}`,
+                                                            })
+                                                        )
+                                                    await s3g.send(new PutObjectCommand({
+                                                        Bucket: bucketName,
+                                                        Key: `proxy,${connectionID}/${inSeq}`,
+                                                        ACL: 'private',
+                                                        Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                                    }))
 
-                                                await s3g.send(new PutObjectCommand({
-                                                    Bucket: bucketName,
-                                                    Key: `appserver,${connectionID}/${inSeq}`,
-                                                    ACL: 'private',
-                                                    Body: Buffer.concat([iv, tag, encryptedMsg]),
-                                                }))
-
-                                                toDelete.push(connectionID)
+                                                }
                                             } catch (e) {
-                                                toDelete.push(connectionID)
                                                 logger("Problem with s3g " + e, "error")
                                             }
                                         }
@@ -653,27 +692,30 @@ const server = net.createServer((socket) => {
                                         if (conn) {
                                             conn.del(`ack,${connectionID}`)
                                             conn.del(`appserver,${connectionID}`)
-                                            await conn.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                            await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                         } else {
                                             try {
-                                                if (config.ackS3)
-                                                    await s3g.send(
-                                                        new DeleteObjectCommand({
-                                                            Bucket: bucketName,
-                                                            Key: `ack,${connectionID}`,
-                                                        })
-                                                    )
-
-                                                await s3g.send(new PutObjectCommand({
-                                                    Bucket: bucketName,
-                                                    Key: `appserver,${connectionID}/${inSeq}`,
-                                                    ACL: 'private',
-                                                    Body: Buffer.concat([iv, tag, encryptedMsg]),
-                                                }))
-
-                                                toDelete.push(connectionID)
+                                                toDelete.add(connectionID)
+                                                if (config.minimalClient) {
+                                                    if (config.ackS3)
+                                                        await sclient.deleteObject(`ack,${connectionID}`)
+                                                    await sclient.putObject(`proxy,${connectionID}/${inSeq}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                                } else {
+                                                    if (config.ackS3)
+                                                        await s3g.send(
+                                                            new DeleteObjectCommand({
+                                                                Bucket: bucketName,
+                                                                Key: `ack,${connectionID}`,
+                                                            })
+                                                        )
+                                                    await s3g.send(new PutObjectCommand({
+                                                        Bucket: bucketName,
+                                                        Key: `proxy,${connectionID}/${inSeq}`,
+                                                        ACL: 'private',
+                                                        Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                                    }))
+                                                }
                                             } catch (e) {
-                                                toDelete.push(connectionID)
                                                 logger("Problem with s3g " + e, "error")
                                             }
                                         }
@@ -709,34 +751,55 @@ process.on('uncaughtException', (error) => {
     logger(`Uncaught exception ${error}`, "error")
 })
 
-process.on('SIGTERM', async () => {
+const finishCallback = async () => {
     logger("Stopping the server", "info")
     server.close()
     if (conn)
         await conn.flushdb()
     else {
         try {
-            const data = await justForDelete.send(
-                new ListObjectsV2Command({
-                    Bucket: bucketName,
-                })
-            )
-            let sagjerk: { Key: string }[] = []
-            if (data.Contents && data.Contents.length != 0) {
-                for (const element of data.Contents)
-                    sagjerk.push({ Key: element.Key! })
-                if (!config.deleteManual) {
-                    try {
-                        await justForDelete.send(
-                            new DeleteObjectsCommand({
-                                Bucket: bucketName,
-                                Delete: {
-                                    Objects: sagjerk,
-                                },
-                            })
-                        )
-                    } catch (e) {
-                        logger("Failed to delete with DeleteObjectsCommand trying with DeleteObject", "info")
+            if (config.minimalClient) {
+                const ls = await Array.fromAsync(sclient.listObjects({ prefix: "" }), (entry) => entry.key)
+                await Promise.all(ls.map(async (key) => {
+                    await sclient.deleteObject(key)
+                }))
+            } else {
+                const data = await justForDelete.send(
+                    new ListObjectsV2Command({
+                        Bucket: bucketName,
+                    })
+                )
+                let sagjerk: { Key: string }[] = []
+                if (data.Contents && data.Contents.length != 0) {
+                    for (const element of data.Contents)
+                        sagjerk.push({ Key: element.Key! })
+                    if (!config.deleteManual) {
+                        try {
+                            logger("OK SO HERE???")
+                            await justForDelete.send(
+                                new DeleteObjectsCommand({
+                                    Bucket: bucketName,
+                                    Delete: {
+                                        Objects: sagjerk,
+                                    },
+                                })
+                            )
+                            logger("REALLLLY?")
+                        } catch (e) {
+                            logger("Failed to delete with DeleteObjectsCommand trying with DeleteObject", "info")
+                            try {
+                                await Promise.all(sagjerk.map(async (key) => {
+                                    await justForDelete.send(new DeleteObjectCommand({
+                                        Bucket: bucketName,
+                                        Key: key.Key
+                                    }))
+                                }))
+                            } catch (e) {
+                                logger("Ok this failed too? why?")
+                                logger(e as any)
+                            }
+                        }
+                    } else {
                         try {
                             await Promise.all(sagjerk.map(async (key) => {
                                 await justForDelete.send(new DeleteObjectCommand({
@@ -749,88 +812,23 @@ process.on('SIGTERM', async () => {
                             logger(e as any)
                         }
                     }
-                } else {
-                    try {
-                        await Promise.all(sagjerk.map(async (key) => {
-                            await justForDelete.send(new DeleteObjectCommand({
-                                Bucket: bucketName,
-                                Key: key.Key
-                            }))
-                        }))
-                    } catch (e) {
-                        logger("Ok this failed too? why?")
-                        logger(e as any)
-                    }
                 }
             }
         } catch (reason) {
+            logger(reason as any)
             logger(`Problem with getting all chunks or deleting them ${reason}`, "error")
         }
     }
     logger("Removing chunks completed", "info")
     exit(0)
+}
+
+process.on('SIGTERM', async () => {
+    await finishCallback()
 })
 
 process.on('SIGINT', async () => {
-    logger("Stopping the server", "info")
-    server.close()
-    if (conn)
-        await conn.flushdb()
-    else {
-        try {
-            const data = await justForDelete.send(
-                new ListObjectsV2Command({
-                    Bucket: bucketName,
-                })
-            )
-            let sagjerk: { Key: string }[] = []
-            if (data.Contents && data.Contents.length != 0) {
-                for (const element of data.Contents)
-                    sagjerk.push({ Key: element.Key! })
-                if (!config.deleteManual) {
-                    try {
-                        await justForDelete.send(
-                            new DeleteObjectsCommand({
-                                Bucket: bucketName,
-                                Delete: {
-                                    Objects: sagjerk,
-                                },
-                            })
-                        )
-                    } catch (e) {
-                        logger("Failed to delete with DeleteObjectsCommand trying with DeleteObject", "info")
-                        try {
-                            await Promise.all(sagjerk.map(async (key) => {
-                                await justForDelete.send(new DeleteObjectCommand({
-                                    Bucket: bucketName,
-                                    Key: key.Key
-                                }))
-                            }))
-                        } catch (e) {
-                            logger("Ok this failed too? why?")
-                            logger(e as any)
-                        }
-                    }
-                } else {
-                    try {
-                        await Promise.all(sagjerk.map(async (key) => {
-                            await justForDelete.send(new DeleteObjectCommand({
-                                Bucket: bucketName,
-                                Key: key.Key
-                            }))
-                        }))
-                    } catch (e) {
-                        logger("Ok this failed too? why?")
-                        logger(e as any)
-                    }
-                }
-            }
-        } catch (reason) {
-            logger(`Problem with getting all chunks or deleting them ${reason}`, "error")
-        }
-    }
-    logger("Removing chunks completed", "info")
-    exit(0)
+    await finishCallback()
 })
 
 logger("Listening on 1080", "info")

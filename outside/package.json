@@ -11,8 +11,9 @@
     "dev": "node dist/receiver.js"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1136.0",
-    "@aws-sdk/s3-request-presigner": "^3.1136.0",
+    "@aws-sdk/client-s3": "^3.1137.0",
+    "@aws-sdk/s3-request-presigner": "^3.1137.0",
+    "@bradenmacdonald/s3-lite-client": "^1.0.0",
     "@smithy/node-http-handler": "^4.12.1",
     "@types/redis": "^4.0.10",
     "ioredis": "^5.10.1",
