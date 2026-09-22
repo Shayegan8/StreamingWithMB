@@ -92,6 +92,7 @@ const s32 = new S3Client({
 
 let toDelete = new Set<string>()
 let toDeletePQueue = new PQueue({ concurrency: 100 })
+const performingQueue = new PQueue({ concurrency: 2500 })
 if (mode == "s3")
     setInterval(async () => {
         const toDeleteCopy = toDelete
@@ -662,18 +663,18 @@ setImmediate(async () => {
                         await new Promise(r => setTimeout(r, 500))
                         continue
                     }
-                    Promise.all(ls.map(async (key) => {
-                        try {
-                            logger("OK HERE!")
-                            const daljerk = await s32.send(new GetObjectCommand({
-                                Bucket: bucketName, Key: key
-                            }))
-                            logger("OK so now this means we really have the shit out of it")
-                            callback(await daljerk.Body!.transformToByteArray())
-                        } catch (e) {
-                            logger("Bad batch " + e)
-                        }
-                    }))
+                    performingQueue.add(async () => {
+                        Promise.all(ls.map(async (key) => {
+                            try {
+                                logger("OK HERE!" + key)
+                                const daljerk = await sclient.getObject(key)
+                                logger("OK so now this means we really have the shit out of it")
+                                callback(new Uint8Array(await daljerk.arrayBuffer()))
+                            } catch (e) {
+                                logger("Bad batch " + e)
+                            }
+                        }))
+                    })
 
                     await Promise.all(ls.map(async (key) => {
                         await sclient.deleteObject(key)
@@ -691,19 +692,21 @@ setImmediate(async () => {
                     let sagjerk = data.Contents!.map((each) => each.Key!)
 
                     try {
-                        Promise.all(sagjerk.map(async (key) => {
-                            try {
-                                logger("OK HERE!")
-                                const daljerk = await s32.send(new GetObjectCommand({
-                                    Bucket: bucketName, Key: key
-                                }))
-                                logger("OK so now this means we really have the shit out of it")
-                                callback(await daljerk.Body!.transformToByteArray())
-                            } catch (e) {
-                                logger("Bad batch " + e)
-                            }
+                        performingQueue.add(async () => {
+                            Promise.all(sagjerk.map(async (key) => {
+                                try {
+                                    logger("OK HERE!")
+                                    const daljerk = await s32.send(new GetObjectCommand({
+                                        Bucket: bucketName, Key: key
+                                    }))
+                                    logger("OK so now this means we really have the shit out of it")
+                                    callback(await daljerk.Body!.transformToByteArray())
+                                } catch (e) {
+                                    logger("Bad batch " + e)
+                                }
 
-                        }))
+                            }))
+                        })
                     } catch (e) {
                         await new Promise(r => setTimeout(r, 500))
                         logger("Bad delete " + e)
