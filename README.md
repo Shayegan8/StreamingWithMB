@@ -32,6 +32,11 @@ Sample config
 }
 ```
 
+Well this is for personal use, if IT ISNT you should make a front api that monitors user traffic, and putting backpressure on it
+
+TODO:
+- better ack logic for s3 mode, i'll put it in a same packet i send without sending another packet
+
 Same operation applies for the proxy :)
 
 oh btw the port is 1080
