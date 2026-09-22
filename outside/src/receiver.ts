@@ -202,45 +202,42 @@ if (mode != "s3")
 
 //DNS RESOLVE, for now its not optimized but works atleast
 const workingDNSes = new Map<string, { ip: string, requiredTime: number }>() // Map<address, ip>
-let fastestDNSes = new Map<string, { ip: string, requiredTime: number }>() //Map<address, fastest ip>
+let fastestDNSes = new Map<string, string>() //Map<address, fastest ip>
 
 const symmetricKey = Buffer.from(config.symmetricKey, "hex")
 
-async function testConnection(address: string, ip: string, port: number): Promise<boolean> {
-    return await new Promise<boolean>((resolve) => {
-        const startTime = Date.now()
-        const connection = net.createConnection(port!, ip)
-        const timeo = setTimeout(() => {
-            connection.destroy()
-            resolve(false)
-        }, 3000)
-        connection.on('connect', () => {
-            clearTimeout(timeo)
-            workingDNSes.set(address, { ip: ip, requiredTime: Date.now() - startTime })
-            resolve(true)
-        })
-        connection.on('error', () => {
-            clearTimeout(timeo)
-            connection.destroy()
-            resolve(false)
-        })
-    })
-}
-
-async function getFastestIP(address: string, port: number): Promise<string | null> {
+async function getFastestIP(address: string, port: number): Promise<string | undefined> {
     if (fastestDNSes.has(address))
-        return fastestDNSes.get(address)!.ip
+        return fastestDNSes.get(address)
     try {
         const ipv4s = (await dns.resolve(address)).filter(x => x.includes('.'))
         if (ipv4s.length == 0)
-            return null
-        for (const ipv4 of ipv4s) {
-            await testConnection(address, ipv4, port)
-        }
-        fastestDNSes = new Map([...workingDNSes.entries()].sort((a, b) => a[1].requiredTime - b[1].requiredTime))
-        return fastestDNSes.get(address)?.ip || null
+            return undefined
+
+        await new Promise<boolean>(async (resolve) => {
+            await Promise.all(ipv4s.map(async (ipv4) => {
+                const startTime = Date.now()
+                const connection = net.createConnection(port!, ipv4)
+                const timeo = setTimeout(() => {
+                    connection.destroy()
+                    resolve(false)
+                }, 3000)
+                connection.on('connect', () => {
+                    clearTimeout(timeo)
+                    workingDNSes.set(address, { ip: ipv4, requiredTime: Date.now() - startTime })
+                    resolve(true)
+                })
+                connection.on('error', () => {
+                    clearTimeout(timeo)
+                    connection.destroy()
+                    resolve(false)
+                })
+            }))
+        })
+        fastestDNSes.set(address, workingDNSes.get(address)?.ip!)
+        return fastestDNSes.get(address)
     } catch (err) {
-        return null
+        return undefined
     }
 }
 
@@ -262,7 +259,6 @@ async function popperBuffer2(key: string, connectionID: string, ctl: AbortContro
                 break
             }
             logger("Im getting this mother fucker so bad " + key)
-            toDelete.add(connectionID)
             let bod: Uint8Array<ArrayBufferLike>
             if (config.minimalClient) {
                 const data = await sclient.getObject(key)
@@ -316,12 +312,10 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 if (config.tls == "")
                     blconn1 = new Redis(config.connstring, {
                         maxRetriesPerRequest: null,
-                        keepAlive: 10000,
                     })
                 else
                     blconn1 = new Redis(config.connstring, {
                         maxRetriesPerRequest: null,
-                        keepAlive: 10000,
                         tls: { servername: config.tls }
                     })
             else {
@@ -331,12 +325,10 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 if (config.tls == "")
                     ackconn = new Redis(config.connstring, {
                         maxRetriesPerRequest: null,
-                        keepAlive: 10000,
                     })
                 else
                     ackconn = new Redis(config.connstring, {
                         maxRetriesPerRequest: null,
-                        keepAlive: 10000,
                         tls: { servername: config.tls }
                     })
 
@@ -425,21 +417,21 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 } else if (config.ackS3) {
                     buffered = await popperBuffer2(`ack,${connectionID}`, connectionID, aborti)
                 }
-                if(mode != "s3" || config.ackS3)
-                if (!buffered) {
-                    logger("Buffered issue")
-                    sockets.get(connectionID)?.socket?.end()
-                    sockets.delete(connectionID)
-                    if (mode != "s3") {
-                        clearInterval(pinger!)
-                        await blconn1!.del(`ack,${connectionID}`)
-                        blconn1!.quit().catch(() => { })
-                        ackconn!.quit().catch(() => { })
-                    } else {
-                        toDelete.add(connectionID)
+                if (mode != "s3" || config.ackS3)
+                    if (!buffered) {
+                        logger("Buffered issue")
+                        sockets.get(connectionID)?.socket?.end()
+                        sockets.delete(connectionID)
+                        if (mode != "s3") {
+                            clearInterval(pinger!)
+                            await blconn1!.del(`ack,${connectionID}`)
+                            blconn1!.quit().catch(() => { })
+                            ackconn!.quit().catch(() => { })
+                        } else {
+                            toDelete.add(connectionID)
+                        }
+                        break
                     }
-                    break
-                }
 
                 if (config.ackS3 || mode != "s3") {
                     const extractIvACK = buffered!.subarray(0, 12)
@@ -451,7 +443,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                     ack = parseInt(decryptedChunkACK.toString('utf8'))
                 }
                 if (!sockets.has(connectionID)) {
-                    let fastestWorkingIP: string | null
+                    let fastestWorkingIP: string | undefined
                     if (atyp === "3")
                         fastestWorkingIP = await getFastestIP(dstaddr, dstport)
                     else
@@ -475,7 +467,6 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                             await conn!.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                         } else {
                             logger("Ok before of this portion!")
-                            toDelete.add(connectionID)
                             try {
                                 if (config.minimalClient) {
                                     await sclient.putObject(`appserver,${connectionID}/${outSeq}`, Buffer.concat([iv, tag, encryptedMsg]))
@@ -489,7 +480,6 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                                 }
                                 logger("The version is now " + outSeq)
                             } catch (reason) {
-                                toDelete.add(connectionID)
                                 logger(`Problem with pushing appserver end ${reason}`, "error")
                             }
                         }
@@ -667,7 +657,7 @@ setImmediate(async () => {
                 callback(payload?.[1]!)
             } else {
                 if (config.minimalClient) {
-                    const ls = await Array.fromAsync(sclient.listObjects({prefix: "informs/"}), (entry) => entry.key)
+                    const ls = await Array.fromAsync(sclient.listObjects({ prefix: "informs/" }), (entry) => entry.key)
                     if (!ls.length) {
                         await new Promise(r => setTimeout(r, 500))
                         continue

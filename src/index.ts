@@ -194,7 +194,6 @@ const popperBuffer = async (key: string, connectionID: string, abrt: AbortContro
                 toDelete.add(connectionID)
                 break
             }
-            toDelete.add(connectionID)
             let bod: Uint8Array<ArrayBufferLike>
             if (config.minimalClient) {
                 const data = await sclient.getObject(key)
@@ -417,7 +416,7 @@ const server = net.createServer((socket) => {
                                             await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
                                         else {
                                             if (config.minimalClient) {
-                                                await sclient.putObject(`ack,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg])).catch((reason) => {
+                                                await sclient.putObject(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK])).catch((reason) => {
                                                     logger(`Problem with pushing inform ${reason}`, "error")
                                                 })
                                             } else {
@@ -425,7 +424,7 @@ const server = net.createServer((socket) => {
                                                     Bucket: bucketName,
                                                     Key: `ack,${connectionID}`,
                                                     ACL: 'private',
-                                                    Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                                    Body: Buffer.concat([ivACK, tagACK, encryptedMsgACK]),
                                                 })).catch((reason) => {
                                                     logger(`Problem with pushing ack after informing ${reason}`, "error")
                                                 })
@@ -490,7 +489,6 @@ const server = net.createServer((socket) => {
                                     conn.del(`appserver,${connectionID}`)
                                     await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                 } else {
-                                    toDelete.add(connectionID)
                                     try {
                                         if (config.minimalClient) {
                                             if (config.ackS3)
@@ -569,7 +567,6 @@ const server = net.createServer((socket) => {
                                             await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                         } else {
                                             try {
-                                                toDelete.add(connectionID)
                                                 if (config.minimalClient) {
                                                     if (config.ackS3)
                                                         await sclient.deleteObject(`ack,${connectionID}`)
@@ -649,7 +646,6 @@ const server = net.createServer((socket) => {
                                             await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                         } else {
                                             try {
-                                                toDelete.add(connectionID)
                                                 if (config.minimalClient) {
                                                     if (config.ackS3)
                                                         await sclient.deleteObject(`ack,${connectionID}`)
@@ -696,7 +692,6 @@ const server = net.createServer((socket) => {
                                             await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                         } else {
                                             try {
-                                                toDelete.add(connectionID)
                                                 if (config.minimalClient) {
                                                     if (config.ackS3)
                                                         await sclient.deleteObject(`ack,${connectionID}`)
