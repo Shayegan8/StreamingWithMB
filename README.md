@@ -32,6 +32,7 @@ Sample config.json that should be in current directory you run the proxy client 
 }
 ```
 
+# Important
 Well this is for personal use, if IT ISNT you should make a front api that monitors user traffic, and putting backpressure on it
 The api you use should put specific limit (backpressure, can be changed by speed of message bus in vpn server (v1) and client proxy (v2), and RTT)
 speed is getting calculated each minute and batches use 0 as their start, the api can be even a v2ray server that talks to client proxy with unix sockets, or the client proxy itself
