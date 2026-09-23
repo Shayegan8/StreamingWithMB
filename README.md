@@ -33,9 +33,15 @@ Sample config
 ```
 
 Well this is for personal use, if IT ISNT you should make a front api that monitors user traffic, and putting backpressure on it
+The api you use should put specific limit (backpressure, can be changed by speed of message bus in vpn server (v1) and client proxy (v2), and RTT)
+speed is getting calculated each minute and batches use 0 as their start, the api can be even a v2ray server that talks to client proxy with unix sockets, or the client proxy itself
+can become the api, there can be any amount of redis db, s3 storage, vpn server, client proxy, the api route users with credintals known in another storage, and forwards them to these
+what i choose unix sockets with api for production (just need to be sockets within the local server, unix socket phrase its just determining we should not have latency in our local machine)
+because the code base becomes scalable and can be used for both personal use and production use, this is just a roadmap for who willing to benefit from this which i dont support them
+and i should be the guy who benefits everything, so why i share my fucking cool tools? because im idiot
 
 TODO:
-- better ack logic for s3 mode, i'll put it in a same packet i send without sending another packet
+- better bandwidth change logic for s3 mode (its kinda like ack, i use ack for this logic), i'll put it in a same packet i send without sending another packet
 
 Same operation applies for the proxy :)
 
