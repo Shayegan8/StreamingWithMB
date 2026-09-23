@@ -40,6 +40,13 @@ what i choose unix sockets with api for production (just need to be sockets with
 because the code base becomes scalable and can be used for both personal use and production use, this is just a roadmap for who willing to benefit from this which i dont support them
 and i should be the guy who benefits everything, so why i share my fucking cool tools? because im idiot
 
+
+QA:
+- Is it fast?: well it depends on your **infrastructure**, if your server has a limit that cuts off chunks n by n, if your server has a slow network interface speed, if your redis or s3 responds slowly, all of these are factors, if you want something really fast, well your message buses should be fast, and so as your internet and so as your servers
+- But redis and s3 have latency and blablabla: Well everything has latency idiot, the whole backend of every website has latency by everything they use what you mean anyway
+- Ow why every packet is less or equal 2mb?: because of my **infrastructure**, despite everything you should know how to code anyway, Well because of a limit my VPN SERVER has it cuts off chunks 2mb per 2mb, so my batches are less than equal 2mb, in every **infrastructure** it can be different
+- Do you use this repository for your daily?: Yes all the day and i have good **infrastructure** which all of them are really really cheap
+
 TODO:
 - better bandwidth change logic for s3 mode (its kinda like ack, i use ack name for this logic), i'll put it in a same packet i send without sending another packet
 
