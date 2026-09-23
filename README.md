@@ -41,7 +41,7 @@ because the code base becomes scalable and can be used for both personal use and
 and i should be the guy who benefits everything, so why i share my fucking cool tools? because im idiot
 
 TODO:
-- better bandwidth change logic for s3 mode (its kinda like ack, i use ack for this logic), i'll put it in a same packet i send without sending another packet
+- better bandwidth change logic for s3 mode (its kinda like ack, i use ack name for this logic), i'll put it in a same packet i send without sending another packet
 
 Same operation applies for the proxy :)
 
