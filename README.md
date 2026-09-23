@@ -50,8 +50,4 @@ QA:
 TODO:
 - better bandwidth change logic for s3 mode (its kinda like ack, i use ack name for this logic), i'll put it in a same packet i send without sending another packet
 
-Same operation applies for the proxy :)
-
-oh btw the port is 1080
-
 MAYBE i add a mechanism that you can use both s3 and redis, like sending your chunks with redis database and getting them with s3 and backwards, maybe i add udp ip spoof tunneling
