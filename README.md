@@ -13,7 +13,7 @@ After that
 npm run dev
 ```
 
-Sample config
+Sample config.json that should be in current directory you run the proxy client and vpn server
 ```
 {
     "connstring": "redis url",
