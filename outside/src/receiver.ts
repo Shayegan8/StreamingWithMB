@@ -643,36 +643,81 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
 }
 
 const allowedPrefixes = config.prefixes
-const prefixQueue = new PQueue({ concurrency: allowedPrefixes.length })
 const performingQueues: PQueue<PriorityQueue, QueueAddOptions>[] = []
 for (let index = 0; index < allowedPrefixes.length; index++)
-    performingQueues.push(new PQueue({concurrency: config.concurrency}))
+    performingQueues.push(new PQueue({ concurrency: config.concurrency }))
 
 const sockets = new Map<string, { socket: Socket | undefined }>()
 setImmediate(async () => {
-    while (true) {
+    if (mode != "s3") {
         try {
-            if (blconn) {
+            while (true) {
+                if (!blconn)
+                    continue
                 logger("SOMEHOW?")
                 const payload = await blconn.brpopBuffer(`inform`, 20)
                 callback(payload?.[1]!)
-            } else {
-                for (const prefix of allowedPrefixes) {
-                    prefixQueue.add(async () => {
-                        if (config.minimalClient) {
-                            const ls = await Array.fromAsync(sclient.listObjects({ prefix: prefix + "/informs/" }), (entry) => entry.key)
-                            if (!ls.length) {
-                                await new Promise(r => setTimeout(r, 500))
-                                return
-                            }
-                            
-                            performingQueues[allowedPrefixes.indexOf(prefix)]!.add(async () => {
-                                Promise.all(ls.map(async (key) => {
+            }
+        } catch (e) {
+            await new Promise(r => setTimeout(r, 500))
+            logger("Bad shit redis " + e, "error")
+        }
+    } else {
+        logger("I reach there")
+
+        await Promise.all(allowedPrefixes.map(async (prefix) => {
+            while (true) {
+                try {
+                    if (config.minimalClient) {
+                        logger("Here")
+                        const ls = await Array.fromAsync(sclient.listObjects({ prefix: prefix + "/informs/" }), (entry) => entry.key)
+                        if (!ls.length) {
+                            await new Promise(r => setTimeout(r, 500))
+                            continue
+                        }
+                        logger("list object")
+                        await performingQueues[allowedPrefixes.indexOf(prefix)]!.add(async () => {
+                            await Promise.all(ls.map(async (key) => {
+                                try {
+                                    logger("OK HERE!" + key)
+                                    const daljerk = await sclient.getObject(key)
+                                    logger("OK so now this means we really have the shit out of it")
+                                    callback(new Uint8Array(await daljerk.arrayBuffer()))
+                                } catch (e) {
+                                    logger("Bad batch " + e)
+                                }
+                            })).catch((e) => {
+                                logger("Problem in inner loop " + e, "error")
+                            })
+                        }).catch((e) => {
+                            logger("Problem in loop " + e, "error")
+                        })
+
+                        await Promise.all(ls.map(async (key) => {
+                            await sclient.deleteObject(key)
+                        }))
+                    } else {
+                        const data = await s32.send(new ListObjectsV2Command({
+                            Bucket: bucketName,
+                            Prefix: prefix + "/informs/",
+                        }))
+
+                        if (!data.Contents || !data.Contents.length) {
+                            await new Promise(r => setTimeout(r, 500))
+                            continue
+                        }
+                        let sagjerk = data.Contents!.map((each) => each.Key!)
+
+                        try {
+                            await performingQueues[allowedPrefixes.indexOf(prefix)]!.add(async () => {
+                                Promise.all(sagjerk.map(async (key) => {
                                     try {
-                                        logger("OK HERE!" + key)
-                                        const daljerk = await sclient.getObject(key)
+                                        logger("OK HERE!")
+                                        const daljerk = await s32.send(new GetObjectCommand({
+                                            Bucket: bucketName, Key: key
+                                        }))
                                         logger("OK so now this means we really have the shit out of it")
-                                        callback(new Uint8Array(await daljerk.arrayBuffer()))
+                                        callback(await daljerk.Body!.transformToByteArray())
                                     } catch (e) {
                                         logger("Bad batch " + e)
                                     }
@@ -682,72 +727,24 @@ setImmediate(async () => {
                             }).catch((e) => {
                                 logger("Problem in loop " + e, "error")
                             })
+                        } catch (e) {
+                            await new Promise(r => setTimeout(r, 500))
+                            logger("Bad delete " + e)
+                        }
 
-                            await Promise.all(ls.map(async (key) => {
-                                await sclient.deleteObject(key)
-                            }))
-                        } else {
-                            const data = await s32.send(new ListObjectsV2Command({
-                                Bucket: bucketName,
-                                Prefix: "informs/",
-                            }))
-
-                            if (!data.Contents || !data.Contents.length) {
-                                await new Promise(r => setTimeout(r, 500))
-                                return
-                            }
-                            let sagjerk = data.Contents!.map((each) => each.Key!)
-
+                        logger("This called faster?")
+                        if (!config.deleteManual) {
                             try {
-                                performingQueues[allowedPrefixes.indexOf(prefix)]!.add(async () => {
-                                    Promise.all(sagjerk.map(async (key) => {
-                                        try {
-                                            logger("OK HERE!")
-                                            const daljerk = await s32.send(new GetObjectCommand({
-                                                Bucket: bucketName, Key: key
-                                            }))
-                                            logger("OK so now this means we really have the shit out of it")
-                                            callback(await daljerk.Body!.transformToByteArray())
-                                        } catch (e) {
-                                            logger("Bad batch " + e)
-                                        }
-                                    })).catch((e) => {
-                                        logger("Problem in inner loop " + e, "error")
+                                await justForDelete.send(
+                                    new DeleteObjectsCommand({
+                                        Bucket: bucketName,
+                                        Delete: {
+                                            Objects: sagjerk.map(Key => ({ Key })),
+                                        },
                                     })
-                                }).catch((e) => {
-                                    logger("Problem in loop " + e, "error")
-                                })
+                                )
                             } catch (e) {
-                                await new Promise(r => setTimeout(r, 500))
-                                logger("Bad delete " + e)
-                            }
-
-                            logger("This called faster?")
-                            if (!config.deleteManual) {
-                                try {
-                                    await justForDelete.send(
-                                        new DeleteObjectsCommand({
-                                            Bucket: bucketName,
-                                            Delete: {
-                                                Objects: sagjerk.map(Key => ({ Key })),
-                                            },
-                                        })
-                                    )
-                                } catch (e) {
-                                    logger("Failed to delete with DeleteObjectsCommand trying with DeleteObject", "info")
-                                    try {
-                                        await Promise.all(sagjerk.map(async (key) => {
-                                            await justForDelete.send(new DeleteObjectCommand({
-                                                Bucket: bucketName,
-                                                Key: key
-                                            }))
-                                        }))
-                                    } catch (e) {
-                                        logger("Ok this failed too? why?")
-                                        logger(e as any)
-                                    }
-                                }
-                            } else {
+                                logger("Failed to delete with DeleteObjectsCommand trying with DeleteObject", "info")
                                 try {
                                     await Promise.all(sagjerk.map(async (key) => {
                                         await justForDelete.send(new DeleteObjectCommand({
@@ -760,15 +757,26 @@ setImmediate(async () => {
                                     logger(e as any)
                                 }
                             }
+                        } else {
+                            try {
+                                await Promise.all(sagjerk.map(async (key) => {
+                                    await justForDelete.send(new DeleteObjectCommand({
+                                        Bucket: bucketName,
+                                        Key: key
+                                    }))
+                                }))
+                            } catch (e) {
+                                logger("Ok this failed too? why?")
+                                logger(e as any)
+                            }
                         }
-                    })
+                    }
+                } catch (e) {
+                    await new Promise(r => setTimeout(r, 500))
+                    logger("Bad shit s3 " + e, "error")
                 }
-
             }
-        } catch (e) {
-            await new Promise(r => setTimeout(r, 500))
-            logger("Bad shit " + e, "error")
-        }
+        }))
     }
 })
 
