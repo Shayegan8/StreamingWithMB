@@ -41,6 +41,8 @@ what i choose unix sockets with api for production (just need to be sockets with
 because the code base becomes scalable and can be used for both personal use and production use, this is just a roadmap for who willing to benefit from this which i dont support them
 and i should be the guy who benefits everything, so why i share my fucking cool tools? because im idiot
 
+# On mobile
+Well I use typescript 5.7 version in termux with **SocksTun** and it works well
 
 QA:
 - Is it fast?: well it depends on your **infrastructure**, if your server has a limit that cuts off chunks n by n, if your server has a slow network interface speed, if your redis or s3 responds slowly, all of these are factors, if you want something really fast, well your message buses should be fast, and so as your internet and so as your servers

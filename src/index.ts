@@ -34,7 +34,7 @@ const justForDelete = new S3Client({
             maxFreeSockets: 256,
             timeout: 60_000,
         }),
-        connectionTimeout: 5_000,
+        connectionTimeout: 60_000,
         socketTimeout: 60_000
     },
     retryMode: 'adaptive',
@@ -57,7 +57,7 @@ const s3g = new S3Client({
             maxFreeSockets: 256,
             timeout: 60_000,
         }),
-        connectionTimeout: 5_000,
+        connectionTimeout: 60_000,
         socketTimeout: 60_000
     },
     retryMode: 'adaptive',

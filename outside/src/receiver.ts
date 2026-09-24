@@ -36,7 +36,7 @@ const justForDelete = new S3Client({
             maxFreeSockets: 256,
             timeout: 60_000,
         }),
-        connectionTimeout: 5_000,
+        connectionTimeout: 60_000,
         socketTimeout: 60_000
     },
     retryMode: 'adaptive',
@@ -59,7 +59,7 @@ const s3 = new S3Client({
             maxFreeSockets: 256,
             timeout: 60_000,
         }),
-        connectionTimeout: 5_000,
+        connectionTimeout: 60_000,
         socketTimeout: 60_000
     },
     retryMode: 'adaptive',
@@ -82,7 +82,7 @@ const s32 = new S3Client({
             maxFreeSockets: 256,
             timeout: 60_000,
         }),
-        connectionTimeout: 5_000,
+        connectionTimeout: 60_000,
         socketTimeout: 60_000
     },
     retryMode: 'adaptive',
@@ -673,7 +673,11 @@ setImmediate(async () => {
                             } catch (e) {
                                 logger("Bad batch " + e)
                             }
-                        }))
+                        })).catch((e) => {
+                            logger("Problem in inner loop " + e, "error")
+                        })
+                    }).catch((e) => {
+                        logger("Problem in loop " + e, "error")
                     })
 
                     await Promise.all(ls.map(async (key) => {
@@ -704,8 +708,11 @@ setImmediate(async () => {
                                 } catch (e) {
                                     logger("Bad batch " + e)
                                 }
-
-                            }))
+                            })).catch((e) => {
+                                logger("Problem in inner loop " + e, "error")
+                            })
+                        }).catch((e) => {
+                            logger("Problem in loop " + e, "error")
                         })
                     } catch (e) {
                         await new Promise(r => setTimeout(r, 500))
@@ -769,7 +776,7 @@ if (mode != "s3")
     }, 10000)
 
 process.on('uncaughtException', (error) => {
-    logger(`${error.cause}:${error.message}:${error.name}`, "error")
+    logger(`BIG ISSUE ${error.cause}:${error.message}:${error.name}`, "error")
 })
 
 logger("Config path style is " + config.pathstyle)
