@@ -13,7 +13,7 @@ After that
 npm run dev
 ```
 
-Sample config.json that should be in current directory you run the proxy client and vpn server
+Sample config.json that should be in current directory you run the proxy client
 ```
 {
     "connstring": "redis url",
@@ -29,8 +29,34 @@ Sample config.json that should be in current directory you run the proxy client 
     "pathstyle": true, // Just if you want add the bucket name like a url path at the end
     "deleteManual": true, // If your endpoint dosent support DeleteObjects command you need this
     "minimalClient": true, // If you want a client dont restrict http calls and manage open sockets and etc or your provider dosent support new sdks you need this 
+    "prefix": "0" // this prefix should be in config of vpn server
 }
 ```
+
+config.json sample for vpn server
+```
+{
+    "connstring": "redis url",
+    "tls": "if you have tls enabled put your redis destination host here",
+    "symmetricKey": "generate a 32 byte symmetric key and turn to hex",
+    "mode": "s3 or redis",
+    "secretKey": "if you use s3 you need your secret key",
+    "accessKey": "you need access key for s3",
+    "endpointUrl": "your s3 object storage url here",
+    "zone": "the zone",
+    "ackS3": false,
+    "bucket": "and your bucket",
+    "pathstyle": true, // Just if you want add the bucket name like a url path at the end
+    "deleteManual": true, // If your endpoint dosent support DeleteObjects command you need this
+    "minimalClient": true, // If you want a client dont restrict http calls and manage open sockets and etc or your provider dosent support new sdks you need this 
+    "prefixes": [
+        "0",
+        "1"
+    ],
+    "concurrency": 2500 // how much a prefix can make callback (socket)
+}
+```
+
 
 # Important
 Well this is for personal use, if IT ISNT you should make a front api that monitors user traffic, and putting backpressure on it

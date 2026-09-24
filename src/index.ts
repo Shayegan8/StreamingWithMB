@@ -30,8 +30,6 @@ const justForDelete = new S3Client({
         httpsAgent: new https.Agent({
             keepAlive: true,
             keepAliveMsecs: 30_000,
-            maxSockets: 512,
-            maxFreeSockets: 256,
             timeout: 60_000,
         }),
         connectionTimeout: 60_000,
@@ -53,8 +51,6 @@ const s3g = new S3Client({
         httpsAgent: new https.Agent({
             keepAlive: true,
             keepAliveMsecs: 30_000,
-            maxSockets: 512,
-            maxFreeSockets: 256,
             timeout: 60_000,
         }),
         connectionTimeout: 60_000,
@@ -64,8 +60,6 @@ const s3g = new S3Client({
     maxAttempts: 8,
     forcePathStyle: config.pathstyle
 })
-
-logger("Path style: " + config.pathstyle)
 
 let toDelete = new Set<string>()
 let toDeletePQueue = new PQueue({ concurrency: 100 })
@@ -393,7 +387,7 @@ const server = net.createServer((socket) => {
                             } else {
                                 await s3g.send(new PutObjectCommand({
                                     Bucket: bucketName,
-                                    Key: `informs/${key}`,
+                                    Key: `${config.prefix}/informs/${key}`,
                                     ACL: 'private',
                                     Body: Buffer.concat([iv, tag, encryptedMsg]),
                                 })).catch((reason) => {
