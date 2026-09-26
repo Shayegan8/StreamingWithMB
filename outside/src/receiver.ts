@@ -33,6 +33,7 @@ const justForDelete = new S3Client({
             keepAlive: true,
             keepAliveMsecs: 30_000,
             timeout: 60_000,
+            maxSockets: config.concurrency
         }),
         connectionTimeout: 60_000,
         socketTimeout: 60_000
@@ -54,6 +55,7 @@ const s3 = new S3Client({
             keepAlive: true,
             keepAliveMsecs: 30_000,
             timeout: 60_000,
+            maxSockets: config.concurrency
         }),
         connectionTimeout: 60_000,
         socketTimeout: 60_000
@@ -74,7 +76,7 @@ const s32 = new S3Client({
         httpsAgent: new https.Agent({
             keepAlive: true,
             keepAliveMsecs: 30_000,
-            maxSockets: 512,
+            maxSockets: config.concurrency,
             timeout: 60_000,
         }),
         connectionTimeout: 60_000,

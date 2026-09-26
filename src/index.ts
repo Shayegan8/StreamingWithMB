@@ -31,10 +31,12 @@ const justForDelete = new S3Client({
             keepAlive: true,
             keepAliveMsecs: 30_000,
             timeout: 60_000,
+            maxSockets: 2500
         }),
         connectionTimeout: 60_000,
-        socketTimeout: 60_000
+        socketTimeout: 60_000,
     },
+
     retryMode: 'adaptive',
     maxAttempts: 8,
     forcePathStyle: config.pathstyle
@@ -52,6 +54,7 @@ const s3g = new S3Client({
             keepAlive: true,
             keepAliveMsecs: 30_000,
             timeout: 60_000,
+            maxSockets: 2500
         }),
         connectionTimeout: 60_000,
         socketTimeout: 60_000
