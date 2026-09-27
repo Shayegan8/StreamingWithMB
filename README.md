@@ -24,7 +24,6 @@ Sample config.json that should be in current directory you run the proxy client
     "accessKey": "you need access key for s3",
     "endpointUrl": "your s3 object storage url here",
     "zone": "the zone",
-    "ackS3": false,
     "bucket": "and your bucket",
     "pathstyle": true, // Just if you want add the bucket name like a url path at the end
     "deleteManual": true, // If your endpoint dosent support DeleteObjects command you need this
@@ -44,7 +43,6 @@ config.json sample for vpn server
     "accessKey": "you need access key for s3",
     "endpointUrl": "your s3 object storage url here",
     "zone": "the zone",
-    "ackS3": false,
     "bucket": "and your bucket",
     "pathstyle": true, // Just if you want add the bucket name like a url path at the end
     "deleteManual": true, // If your endpoint dosent support DeleteObjects command you need this
