@@ -311,14 +311,14 @@ const server = net.createServer((socket) => {
                                     else {
                                         const concatious = Buffer.concat(buff)
                                         const preMsg = Buffer.alloc(20 + concatious.length)
-                                        const sLength = `${concatious.length * (1024 * 1024)}`
-                                        for (let index = sLength.length; index < sLength.length; index++)
-                                            sLength.concat("s")
+                                        let sLength = `${concatious.length * (1024 * 1024)}`
+                                        for (let index = sLength.length; index < 11; index++)
+                                            sLength = sLength.concat("s")
                                         Buffer.from(sLength).copy(preMsg, 0, 0, 10)
                                         const jerk = crypto.randomBytes(10)
                                         newVersion = jerk
-                                        jerk.copy(preMsg, 0, 0, 10)
-                                        concatious.copy(preMsg, 10, 0)
+                                        jerk.copy(preMsg, 10)
+                                        concatious.copy(preMsg, 20, 0)
                                         msg = preMsg
                                     }
                                     const iv = crypto.randomBytes(12)
@@ -326,6 +326,7 @@ const server = net.createServer((socket) => {
                                     const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                                     const tag = cipher.getAuthTag()
                                     if (conn) {
+                                        logger(`${msg}`)
                                         await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                     } else {
                                         rtt = Date.now()
@@ -413,7 +414,7 @@ const server = net.createServer((socket) => {
                                     const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
                                     const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
                                     const tagACK = cipherACK.getAuthTag()
-                                        await conn!.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
+                                    await conn!.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
                                 }
                             }, 100)
 
@@ -493,7 +494,10 @@ const server = net.createServer((socket) => {
                                 if (inatervo)
                                     clearInterval(inatervo)
                                 clearImmediate(imedo)
-                                ctl.abort()
+                                if (mode == "s3") {
+                                    toDelete.add(connectionID)
+                                    ctl.abort()
+                                }
                                 if (blconn)
                                     blconn.quit().catch(() => { })
 

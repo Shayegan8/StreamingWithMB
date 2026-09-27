@@ -404,6 +404,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 let realMsg: Buffer<ArrayBuffer>
                 if (mode == "s3") {
                     const shayeganedLength = decryptedChunk.subarray(0, 10).toString('utf8')
+                    logger("Ok this is")
                     const splitedSL = shayeganedLength.split('s')
                     logger(`Captured SL: ${shayeganedLength}, ${splitedSL[0]}, ${splitedSL}`)
                     if (splitedSL.length != 0)
@@ -412,7 +413,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         ack = parseInt(shayeganedLength)
                     const newVersion = decryptedChunk.subarray(10, 20)
                     inSeq = newVersion.toString('hex')
-                    realMsg = decryptedChunk.subarray(10)
+                    realMsg = decryptedChunk.subarray(20)
                 }
 
                 let buffered: Uint8Array<ArrayBufferLike> | undefined
@@ -666,12 +667,10 @@ setImmediate(async () => {
         }
     } else {
         logger("I reach there")
-
         await Promise.all(allowedPrefixes.map(async (prefix) => {
             while (true) {
                 try {
                     if (config.minimalClient) {
-                        logger("Here")
                         const ls = await Array.fromAsync(sclient.listObjects({ prefix: prefix + "/informs/" }), (entry) => entry.key)
                         if (!ls.length) {
                             await new Promise(r => setTimeout(r, 500))
