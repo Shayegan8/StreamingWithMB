@@ -172,7 +172,7 @@ if (mode != 's3')
         conn = new Redis(config.connstring, {
             maxRetriesPerRequest: null,
             keepAlive: 10000,
-            tls: { servername: config.tls }
+            tls: { servername: config.tls },
         })
 
 let blconn: Redis | null
@@ -186,7 +186,7 @@ if (mode != 's3')
         blconn = new Redis(config.connstring, {
             maxRetriesPerRequest: null,
             keepAlive: 10000,
-            tls: { servername: config.tls }
+            tls: { servername: config.tls },
         })
 
 if (mode != "s3")
@@ -309,11 +309,13 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 if (config.tls == "")
                     blconn1 = new Redis(config.connstring, {
                         maxRetriesPerRequest: null,
+                        keepAlive: 10000
                     })
                 else
                     blconn1 = new Redis(config.connstring, {
                         maxRetriesPerRequest: null,
-                        tls: { servername: config.tls }
+                        tls: { servername: config.tls },
+                        keepAlive: 10000
                     })
             else {
             }
@@ -322,11 +324,13 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 if (config.tls == "")
                     ackconn = new Redis(config.connstring, {
                         maxRetriesPerRequest: null,
+                        keepAlive: 10000
                     })
                 else
                     ackconn = new Redis(config.connstring, {
                         maxRetriesPerRequest: null,
-                        tls: { servername: config.tls }
+                        tls: { servername: config.tls },
+                        keepAlive: 10000
                     })
 
             if (mode != "s3")
