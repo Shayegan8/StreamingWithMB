@@ -89,41 +89,56 @@ const s32 = new S3Client({
 
 let toDelete = new Set<string>()
 let toDeletePQueue = new PQueue({ concurrency: 100 })
+const intervalQueue = new PQueue({ concurrency: 1 })
 if (mode == "s3")
     setInterval(async () => {
-        const toDeleteCopy = [...toDelete]
-        if (toDeleteCopy.length != 0) {
-            for (const connectionID of toDelete) {
-                try {
-                    if (config.minimalClient) {
-                        const ls = await Array.fromAsync(sclient.listObjects({ prefix: `proxy,${connectionID}/` }), (entry) => entry.key)
-                        if (!ls.length) {
-                            logger(`Nothing to delete`, "info")
-                            continue
-                        }
-                        await Promise.all(ls.map(async key => await toDeletePQueue.add(async () => await sclient.deleteObject(key))))
-                    } else {
-                        const data2 = await justForDelete.send(new ListObjectsV2Command({
-                            Bucket: bucketName,
-                            Prefix: `proxy,${connectionID}/`,
-                        }))
+        intervalQueue.add(async () => {
+            const toDeleteCopy = [...toDelete]
+            if (toDeleteCopy.length != 0) {
+                for (const connectionID of toDelete) {
+                    try {
+                        if (config.minimalClient) {
+                            const ls = await Array.fromAsync(sclient.listObjects({ prefix: `proxy,${connectionID}/` }), (entry) => entry.key)
+                            if (!ls.length) {
+                                logger(`Nothing to delete`, "info")
+                                continue
+                            }
+                            await Promise.all(ls.map(async key => await toDeletePQueue.add(async () => await sclient.deleteObject(key))))
+                        } else {
+                            const data2 = await justForDelete.send(new ListObjectsV2Command({
+                                Bucket: bucketName,
+                                Prefix: `proxy,${connectionID}/`,
+                            }))
 
-                        const sagjerk2: { Key: string }[] = []
-                        if (data2.Contents && data2.Contents.length != 0) {
-                            for (const element of data2.Contents)
-                                sagjerk2.push({ Key: element.Key! })
-                            if (!config.deleteManual) {
-                                try {
-                                    await justForDelete.send(
-                                        new DeleteObjectsCommand({
-                                            Bucket: bucketName,
-                                            Delete: {
-                                                Objects: sagjerk2,
-                                            },
-                                        })
-                                    )
-                                } catch (e) {
-                                    logger("Failed to delete with DeleteObjectsCommand trying with DeleteObject", "info")
+                            const sagjerk2: { Key: string }[] = []
+                            if (data2.Contents && data2.Contents.length != 0) {
+                                for (const element of data2.Contents)
+                                    sagjerk2.push({ Key: element.Key! })
+                                if (!config.deleteManual) {
+                                    try {
+                                        await justForDelete.send(
+                                            new DeleteObjectsCommand({
+                                                Bucket: bucketName,
+                                                Delete: {
+                                                    Objects: sagjerk2,
+                                                },
+                                            })
+                                        )
+                                    } catch (e) {
+                                        logger("Failed to delete with DeleteObjectsCommand trying with DeleteObject", "info")
+                                        try {
+                                            await Promise.all(sagjerk2.map(async (key) => {
+                                                await justForDelete.send(new DeleteObjectCommand({
+                                                    Bucket: bucketName,
+                                                    Key: key.Key
+                                                }))
+                                            }))
+                                        } catch (e) {
+                                            logger("Ok this failed too? why?")
+                                            logger(e as any)
+                                        }
+                                    }
+                                } else {
                                     try {
                                         await Promise.all(sagjerk2.map(async (key) => {
                                             await justForDelete.send(new DeleteObjectCommand({
@@ -136,27 +151,15 @@ if (mode == "s3")
                                         logger(e as any)
                                     }
                                 }
-                            } else {
-                                try {
-                                    await Promise.all(sagjerk2.map(async (key) => {
-                                        await justForDelete.send(new DeleteObjectCommand({
-                                            Bucket: bucketName,
-                                            Key: key.Key
-                                        }))
-                                    }))
-                                } catch (e) {
-                                    logger("Ok this failed too? why?")
-                                    logger(e as any)
-                                }
                             }
                         }
+                    } catch (e) {
+                        logger(`failed to delete ${connectionID}: ${e}`, "error")
                     }
-                } catch (e) {
-                    logger(`failed to delete ${connectionID}: ${e}`, "error")
                 }
+                toDelete.clear()
             }
-            toDelete.clear()
-        }
+        })
     }, 10000)
 
 const bucketName = config.bucket
