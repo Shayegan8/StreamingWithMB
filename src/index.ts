@@ -166,7 +166,7 @@ if (mode != 's3')
             tls: { servername: config.tls }
         })
 
-if (mode != 's3')
+if (mode != 's3' && config.pingAllT)
     try {
         await conn!.ping()
         await ack!.ping()
@@ -433,7 +433,7 @@ const server = net.createServer((socket) => {
                                     tls: { servername: config.tls }
                                 })
                         let pinger: NodeJS.Timeout | null
-                        if (mode != "s3")
+                        if (mode != "s3" && config.pingAllT)
                             pinger = setInterval(async () => {
                                 try {
                                     await blconn!.ping()
@@ -644,7 +644,7 @@ const server = net.createServer((socket) => {
     })
 })
 
-if (mode != "s3")
+if (mode != "s3" && config.pingAllT)
     setInterval(async () => {
         try {
             await conn!.ping()

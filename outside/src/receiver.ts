@@ -91,8 +91,8 @@ let toDelete = new Set<string>()
 let toDeletePQueue = new PQueue({ concurrency: 100 })
 if (mode == "s3")
     setInterval(async () => {
-        const toDeleteCopy = toDelete
-        if (toDeleteCopy.size != 0) {
+        const toDeleteCopy = [...toDelete]
+        if (toDeleteCopy.length != 0) {
             for (const connectionID of toDelete) {
                 try {
                     if (config.minimalClient) {
@@ -175,7 +175,7 @@ if (mode != 's3')
             tls: { servername: config.tls },
         })
 
-if (mode != "s3")
+if (mode != "s3" && config.pingAllT)
     try {
         await conn!.ping()
     } catch (e) {
@@ -318,7 +318,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         keepAlive: 10000
                     })
 
-            if (mode != "s3")
+            if (mode != "s3" && config.pingAllT)
                 try {
                     await blconn1!.ping()
                     await ackconn!.ping()
@@ -327,7 +327,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 }
 
             let pinger: NodeJS.Timeout | null
-            if (mode != "s3")
+            if (mode != "s3" && config.pingAllT)
                 pinger = setInterval(async () => {
                     try {
                         await blconn1!.ping()
@@ -652,12 +652,13 @@ setImmediate(async () => {
                     keepAlive: 10000,
                     tls: { servername: config.tls },
                 })
-                setInterval(async () => {
-                    try {
-                        await blconn.ping()
-                    } catch (e) {
-                    }
-                }, 10000)
+                if (mode != "s3" && config.pingAllT)
+                    setInterval(async () => {
+                        try {
+                            await blconn.ping()
+                        } catch (e) {
+                        }
+                    }, 10000)
                 try {
                     while (true) {
                         logger("SOMEHOW?")
@@ -786,7 +787,7 @@ setImmediate(async () => {
     }
 })
 
-if (mode != "s3")
+if (mode != "s3" && config.pingAllT)
     setInterval(async () => {
         try {
             await conn!.ping()
