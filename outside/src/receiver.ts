@@ -358,7 +358,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
             while (mode == "s3" ? !(aborti.signal.aborted) : true) {
                 let request: Uint8Array<ArrayBufferLike> | undefined
                 if (mode != "s3")
-                    request = (await blconn1!.brpopBuffer(`proxy,${connectionID}`, 20))?.[1]
+                    request = (await blconn1!.brpopBuffer(`proxy,${connectionID}`, 0))?.[1]
                 else {
                     logger(`proxy,${connectionID}/${inSeq}`)
                     request = await popperBuffer2(`proxy,${connectionID}/${inSeq}`, connectionID, aborti)
@@ -418,7 +418,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
 
                 let buffered: Uint8Array<ArrayBufferLike> | undefined
                 if (mode != "s3") {
-                    buffered = (await ackconn!.brpopBuffer(`ack,${connectionID}`, 20))?.[1]
+                    buffered = (await ackconn!.brpopBuffer(`ack,${connectionID}`, 0))?.[1]
                     if (!buffered) {
                         logger("Buffered issue")
                         sockets.get(connectionID)?.socket?.end()
@@ -659,7 +659,7 @@ setImmediate(async () => {
                     if (!blconn)
                         continue
                     logger("SOMEHOW?")
-                    const payload = await blconn.brpopBuffer(`inform${prefix}`, 20)
+                    const payload = await blconn.brpopBuffer(`inform${prefix}`, 0)
                     callback(payload?.[1]!)
                 }
             } catch (e) {

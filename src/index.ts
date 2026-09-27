@@ -326,7 +326,6 @@ const server = net.createServer((socket) => {
                                     const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                                     const tag = cipher.getAuthTag()
                                     if (conn) {
-                                        logger(`${msg}`)
                                         await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                     } else {
                                         rtt = Date.now()
@@ -523,7 +522,7 @@ const server = net.createServer((socket) => {
                                 try {
                                     let response: ArrayBuffer | Uint8Array<ArrayBufferLike> | undefined
                                     if (blconn)
-                                        response = (await blconn.brpopBuffer(`appserver,${connectionID}`))?.[1]
+                                        response = (await blconn.brpopBuffer(`appserver,${connectionID}`, 0))?.[1]
                                     else {
                                         response = await popperBuffer(`appserver,${connectionID}/${outSeq}`, connectionID, ctl)
                                     }
