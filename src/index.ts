@@ -214,12 +214,31 @@ const popperBuffer = async (key: string, connectionID: string, abrt: AbortContro
             }
             return bod
         } catch (e) {
-            await new Promise(r => setTimeout(r, 500))
+            await new Promise(r => setTimeout(r, delay))
             delay = Math.min(delay * 2, 500)
         }
     }
 }
 
+const ackChange = (rtt: number, max: number, connectionID: string, response: Uint8Array<ArrayBufferLike>) => {
+    const meseaured = Date.now() - rtt
+    if (meseaured > 10000)
+        max = Math.max((max / 2), 256 * 1024)
+    else
+        if (max < (1024 * 1024 * 2))
+            max += (500 * 1024)
+    if (max > (2 * 1024 * 1024))
+        max = Math.max((max / 2), 256 * 1024)
+    logger(`RTT ${connectionID}:${String(Math.fround(meseaured / (1000))).slice(0, 5)}s for received packet with length of ${Math.fround(response.length / (1024 * 1024))}mb`, "info")
+}
+
+/*
+We have another 10 fixed length bit in s3 mode
+In this mode we put the length here and if it didnt pass the length of 10, we make it length of 10 by adding s
+Then when server received this packet the thing it does is split it by s well if the length of splited array was 0
+This means we its completed or maybe more than that but it got overflow, but this cant be happening because 2mb
+have 7digit when converted to byte
+*/
 const server = net.createServer((socket) => {
     socket.on('error', (err) => {
         logger(`Client error: ${err.message}`, "error")
@@ -274,7 +293,6 @@ const server = net.createServer((socket) => {
 
                         let max = 2 * 1024 * 1024
                         let inSeq = "0"
-                        const pqueueMax = new PQueue({ concurrency: 1 })
                         let sent = false
                         let inatervo: NodeJS.Timeout | null
                         socket.on('data', (data: Buffer) => {
@@ -292,7 +310,11 @@ const server = net.createServer((socket) => {
                                         msg = Buffer.concat(buff)
                                     else {
                                         const concatious = Buffer.concat(buff)
-                                        const preMsg = Buffer.alloc(10 + concatious.length)
+                                        const preMsg = Buffer.alloc(20 + concatious.length)
+                                        const sLength = `${concatious.length * (1024 * 1024)}`
+                                        for (let index = sLength.length; index < sLength.length; index++)
+                                            sLength.concat("s")
+                                        Buffer.from(sLength).copy(preMsg, 0, 0, 10)
                                         const jerk = crypto.randomBytes(10)
                                         newVersion = jerk
                                         jerk.copy(preMsg, 0, 0, 10)
@@ -307,11 +329,11 @@ const server = net.createServer((socket) => {
                                         await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                     } else {
                                         rtt = Date.now()
-                                        if (config.minimalClient) {
+                                        if (config.minimalClient)
                                             await sclient.putObject(`proxy,${connectionID}/${inSeq}`, Buffer.concat([iv, tag, encryptedMsg])).catch((reason) => {
                                                 logger(`Problem with pushing batch after informing ${reason}`, "error")
                                             })
-                                        } else {
+                                        else
                                             await s3g.send(new PutObjectCommand({
                                                 Bucket: bucketName,
                                                 Key: `proxy,${connectionID}/${inSeq}`,
@@ -320,39 +342,22 @@ const server = net.createServer((socket) => {
                                             })).catch((reason) => {
                                                 logger(`Problem with pushing batch after informing ${reason}`, "error")
                                             })
-                                        }
                                         logger(`It took ${Date.now() - rtt}ms for pushing batch`, "info")
                                         inSeq = newVersion!.toString('hex')
                                     }
                                     buff = []
                                     sent = true
-                                    if (config.ackS3 || mode != "s3")
-                                        pqueueMax.add(async () => {
-                                            const msgACK = Buffer.from(`${max}`, 'binary')
-                                            const ivACK = crypto.randomBytes(12)
-                                            const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
-                                            const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
-                                            const tagACK = cipherACK.getAuthTag()
-                                            if (conn) {
-                                                rtt = Date.now()
-                                                await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
-                                            } else {
-                                                if (config.minimalClient) {
-                                                    await sclient.putObject(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK])).catch((reason) => {
-                                                        logger(`Problem with pushing batch after informing ${reason}`, "error")
-                                                    })
-                                                } else {
-                                                    await s3g.send(new PutObjectCommand({
-                                                        Bucket: bucketName,
-                                                        Key: `ack,${connectionID}`,
-                                                        ACL: 'private',
-                                                        Body: Buffer.concat([ivACK, tagACK, encryptedMsgACK]),
-                                                    })).catch((reason) => {
-                                                        logger(`Problem with pushing batch after informing ${reason}`, "error")
-                                                    })
-                                                }
-                                            }
-                                        })
+                                    if (mode != "s3") {
+                                        const msgACK = Buffer.from(`${max}`, 'binary')
+                                        const ivACK = crypto.randomBytes(12)
+                                        const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
+                                        const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
+                                        const tagACK = cipherACK.getAuthTag()
+                                        if (conn) {
+                                            rtt = Date.now()
+                                            await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
+                                        }
+                                    }
                                 })
                             }, 100)
                         })
@@ -398,38 +403,20 @@ const server = net.createServer((socket) => {
                                 })
                             }
                         }
-                        if (config.ackS3 || mode != "s3") {
+                        if (mode != "s3") {
                             inatervo = setInterval(async () => {
                                 if (!sent) {
                                     sent = true
                                     rtt = Date.now()
-                                    pqueueMax.add(async () => {
-                                        const msgACK = Buffer.from(`${max}`, 'binary')
-                                        const ivACK = crypto.randomBytes(12)
-                                        const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
-                                        const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
-                                        const tagACK = cipherACK.getAuthTag()
-                                        if (conn)
-                                            await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
-                                        else {
-                                            if (config.minimalClient) {
-                                                await sclient.putObject(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK])).catch((reason) => {
-                                                    logger(`Problem with pushing inform ${reason}`, "error")
-                                                })
-                                            } else {
-                                                await s3g.send(new PutObjectCommand({
-                                                    Bucket: bucketName,
-                                                    Key: `ack,${connectionID}`,
-                                                    ACL: 'private',
-                                                    Body: Buffer.concat([ivACK, tagACK, encryptedMsgACK]),
-                                                })).catch((reason) => {
-                                                    logger(`Problem with pushing ack after informing ${reason}`, "error")
-                                                })
-                                            }
-                                        }
-                                    })
+                                    const msgACK = Buffer.from(`${max}`, 'binary')
+                                    const ivACK = crypto.randomBytes(12)
+                                    const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
+                                    const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
+                                    const tagACK = cipherACK.getAuthTag()
+                                        await conn!.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
                                 }
                             }, 100)
+
                         }
                         let blconn: Redis | null
                         const ctl = new AbortController()
@@ -487,18 +474,9 @@ const server = net.createServer((socket) => {
                                     await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                 } else {
                                     try {
-                                        if (config.minimalClient) {
-                                            if (config.ackS3)
-                                                await sclient.deleteObject(`ack,${connectionID}`)
+                                        if (config.minimalClient)
                                             await sclient.putObject(`proxy,${connectionID}/${inSeq}`, Buffer.concat([iv, tag, encryptedMsg]))
-                                        } else {
-                                            if (config.ackS3)
-                                                await s3g.send(
-                                                    new DeleteObjectCommand({
-                                                        Bucket: bucketName,
-                                                        Key: `ack,${connectionID}`,
-                                                    })
-                                                )
+                                        else {
                                             await s3g.send(new PutObjectCommand({
                                                 Bucket: bucketName,
                                                 Key: `proxy,${connectionID}/${inSeq}`,
@@ -509,15 +487,16 @@ const server = net.createServer((socket) => {
                                     } catch (e) {
                                         logger("Problem with s3g " + e, "error")
                                     }
-                                    if (pinger)
-                                        clearInterval(pinger)
-                                    if (inatervo)
-                                        clearInterval(inatervo)
-                                    clearImmediate(imedo)
-                                    ctl.abort()
-                                    if (blconn)
-                                        blconn.quit().catch(() => { })
                                 }
+                                if (pinger)
+                                    clearInterval(pinger)
+                                if (inatervo)
+                                    clearInterval(inatervo)
+                                clearImmediate(imedo)
+                                ctl.abort()
+                                if (blconn)
+                                    blconn.quit().catch(() => { })
+
                             })
                         })
 
@@ -540,7 +519,7 @@ const server = net.createServer((socket) => {
                                 try {
                                     let response: ArrayBuffer | Uint8Array<ArrayBufferLike> | undefined
                                     if (blconn)
-                                        response = (await blconn.brpopBuffer(`appserver,${connectionID}`, 20))?.[1]
+                                        response = (await blconn.brpopBuffer(`appserver,${connectionID}`))?.[1]
                                     else {
                                         response = await popperBuffer(`appserver,${connectionID}/${outSeq}`, connectionID, ctl)
                                     }
@@ -553,61 +532,27 @@ const server = net.createServer((socket) => {
                                         clearImmediate(imedo)
                                         if (blconn)
                                             blconn.quit().catch(() => { })
-                                        const msg = Buffer.from('end', 'binary')
-                                        const iv = crypto.randomBytes(12)
-                                        const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
-                                        const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
-                                        const tag = cipher.getAuthTag()
-                                        if (conn) {
-                                            conn.del(`ack,${connectionID}`)
-                                            conn.del(`appserver,${connectionID}`)
-                                            await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                        if (mode == "s3") {
+                                            toDelete.add(connectionID)
+                                            ctl.abort()
                                         } else {
-                                            try {
-                                                if (config.minimalClient) {
-                                                    if (config.ackS3)
-                                                        await sclient.deleteObject(`ack,${connectionID}`)
-                                                    await sclient.putObject(`proxy,${connectionID}/${inSeq}`, Buffer.concat([iv, tag, encryptedMsg]))
-                                                } else {
-                                                    if (config.ackS3)
-                                                        await s3g.send(
-                                                            new DeleteObjectCommand({
-                                                                Bucket: bucketName,
-                                                                Key: `ack,${connectionID}`,
-                                                            })
-                                                        )
-
-                                                    await s3g.send(new PutObjectCommand({
-                                                        Bucket: bucketName,
-                                                        Key: `proxy,${connectionID}/${inSeq}`,
-                                                        ACL: 'private',
-                                                        Body: Buffer.concat([iv, tag, encryptedMsg]),
-                                                    }))
-                                                }
-                                            } catch (e) {
-                                                logger("Problem with s3g " + e, "error")
+                                            const msg = Buffer.from('end', 'binary')
+                                            const iv = crypto.randomBytes(12)
+                                            const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
+                                            const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
+                                            const tag = cipher.getAuthTag()
+                                            if (conn) {
+                                                conn.del(`ack,${connectionID}`)
+                                                conn.del(`appserver,${connectionID}`)
+                                                await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                             }
                                         }
-                                        toDelete.add(connectionID)
-                                        ctl.abort()
                                         socket.end()
                                         break
                                     }
                                     sent = false
-                                    if (config.ackS3 || mode != "s3")
-                                        pqueueMax.add(() => {
-                                            const meseaured = Date.now() - rtt
-                                            if (meseaured > 10000)
-                                                max = Math.max((max / 2), 256 * 1024)
-                                            else
-                                                if (max < (1024 * 1024 * 2))
-                                                    max += (500 * 1024)
-                                            if (max > (2 * 1024 * 1024))
-                                                max = Math.max((max / 2), 256 * 1024)
-                                            logger(`RTT ${connectionID}:${String(Math.fround(meseaured / (1000))).slice(0, 5)}s for received packet with length of ${Math.fround(response!.length / (1024 * 1024))}mb`, "info")
-                                        })
-
-                                    logger(`RTT ${connectionID}:${String(Math.fround((Date.now() - rtt) / (1000))).slice(0, 5)}s for received packet with length of ${Math.fround(response!.length / (1024 * 1024))}mb`, "info")
+                                    if (mode != "s3")
+                                        ackChange(rtt, max, connectionID, response)
 
                                     const extractIv = response!.subarray(0, 12)
                                     const tag = response!.subarray(12, 28)
@@ -631,40 +576,19 @@ const server = net.createServer((socket) => {
                                         clearImmediate(imedo)
                                         if (blconn)
                                             blconn.quit().catch(() => { })
-                                        socket.end()
-                                        const msg = Buffer.from('end', 'binary')
-                                        const iv = crypto.randomBytes(12)
-                                        const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
-                                        const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
-                                        const tag = cipher.getAuthTag()
-                                        if (conn) {
-                                            conn.del(`ack,${connectionID}`)
-                                            conn.del(`appserver,${connectionID}`)
-                                            await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                        if (mode == "s3") {
+                                            toDelete.add(connectionID)
+                                            ctl.abort()
                                         } else {
-                                            try {
-                                                if (config.minimalClient) {
-                                                    if (config.ackS3)
-                                                        await sclient.deleteObject(`ack,${connectionID}`)
-                                                    await sclient.putObject(`proxy,${connectionID}/${inSeq}`, Buffer.concat([iv, tag, encryptedMsg]))
-                                                } else {
-                                                    if (config.ackS3)
-                                                        await s3g.send(
-                                                            new DeleteObjectCommand({
-                                                                Bucket: bucketName,
-                                                                Key: `ack,${connectionID}`,
-                                                            })
-                                                        )
-                                                    await s3g.send(new PutObjectCommand({
-                                                        Bucket: bucketName,
-                                                        Key: `proxy,${connectionID}/${inSeq}`,
-                                                        ACL: 'private',
-                                                        Body: Buffer.concat([iv, tag, encryptedMsg]),
-                                                    }))
-
-                                                }
-                                            } catch (e) {
-                                                logger("Problem with s3g " + e, "error")
+                                            const msg = Buffer.from('end', 'binary')
+                                            const iv = crypto.randomBytes(12)
+                                            const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
+                                            const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
+                                            const tag = cipher.getAuthTag()
+                                            if (conn) {
+                                                conn.del(`ack,${connectionID}`)
+                                                conn.del(`appserver,${connectionID}`)
+                                                await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                             }
                                         }
                                         socket.end()
@@ -674,10 +598,6 @@ const server = net.createServer((socket) => {
                                 } catch (error) {
                                     if (mode != "s3") {
                                         clearInterval(pinger!)
-                                        conn!.del(`ack,${connectionID}`)
-                                        conn!.del(`proxy,${connectionID}`)
-                                        await conn!.del(`appserver,${connectionID}`)
-                                    } else {
                                         const msg = Buffer.from('end', 'binary')
                                         const iv = crypto.randomBytes(12)
                                         const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
@@ -687,30 +607,21 @@ const server = net.createServer((socket) => {
                                             conn.del(`ack,${connectionID}`)
                                             conn.del(`appserver,${connectionID}`)
                                             await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
-                                        } else {
-                                            try {
-                                                if (config.minimalClient) {
-                                                    if (config.ackS3)
-                                                        await sclient.deleteObject(`ack,${connectionID}`)
-                                                    await sclient.putObject(`proxy,${connectionID}/${inSeq}`, Buffer.concat([iv, tag, encryptedMsg]))
-                                                } else {
-                                                    if (config.ackS3)
-                                                        await s3g.send(
-                                                            new DeleteObjectCommand({
-                                                                Bucket: bucketName,
-                                                                Key: `ack,${connectionID}`,
-                                                            })
-                                                        )
-                                                    await s3g.send(new PutObjectCommand({
-                                                        Bucket: bucketName,
-                                                        Key: `proxy,${connectionID}/${inSeq}`,
-                                                        ACL: 'private',
-                                                        Body: Buffer.concat([iv, tag, encryptedMsg]),
-                                                    }))
-                                                }
-                                            } catch (e) {
-                                                logger("Problem with s3g " + e, "error")
+                                        }
+                                    } else {
+                                        try {
+                                            if (config.minimalClient) {
+                                                await sclient.putObject(`proxy,${connectionID}/${inSeq}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                            } else {
+                                                await s3g.send(new PutObjectCommand({
+                                                    Bucket: bucketName,
+                                                    Key: `proxy,${connectionID}/${inSeq}`,
+                                                    ACL: 'private',
+                                                    Body: Buffer.concat([iv, tag, encryptedMsg]),
+                                                }))
                                             }
+                                        } catch (e) {
+                                            logger("Problem with s3g " + e, "error")
                                         }
                                     }
                                     if (inatervo)

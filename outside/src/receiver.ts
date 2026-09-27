@@ -385,12 +385,6 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
                 decipher.setAuthTag(tag)
                 const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
-                let realMsg: Buffer<ArrayBuffer>
-                if (mode == "s3") {
-                    const newVersion = decryptedChunk.subarray(0, 10)
-                    inSeq = newVersion.toString('hex')
-                    realMsg = decryptedChunk.subarray(10)
-                }
                 logger("The version now we want after " + inSeq)
                 if (!Buffer.from('end', 'binary').compare(decryptedChunk)) {
                     logger("Freeing memory from client")
@@ -407,30 +401,36 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                     }
                     break
                 }
+                let realMsg: Buffer<ArrayBuffer>
+                if (mode == "s3") {
+                    const shayeganedLength = decryptedChunk.subarray(0, 10).toString('utf8')
+                    const splitedSL = shayeganedLength.split('s')
+                    logger(`Captured SL: ${shayeganedLength}, ${splitedSL[0]}, ${splitedSL}`)
+                    if (splitedSL.length != 0)
+                        ack = parseInt(splitedSL[0]!)
+                    else
+                        ack = parseInt(shayeganedLength)
+                    const newVersion = decryptedChunk.subarray(10, 20)
+                    inSeq = newVersion.toString('hex')
+                    realMsg = decryptedChunk.subarray(10)
+                }
 
                 let buffered: Uint8Array<ArrayBufferLike> | undefined
                 if (mode != "s3") {
                     buffered = (await ackconn!.brpopBuffer(`ack,${connectionID}`, 20))?.[1]
-                } else if (config.ackS3) {
-                    buffered = await popperBuffer2(`ack,${connectionID}`, connectionID, aborti)
-                }
-                if (mode != "s3" || config.ackS3)
                     if (!buffered) {
                         logger("Buffered issue")
                         sockets.get(connectionID)?.socket?.end()
                         sockets.delete(connectionID)
-                        if (mode != "s3") {
-                            clearInterval(pinger!)
-                            await blconn1!.del(`ack,${connectionID}`)
-                            blconn1!.quit().catch(() => { })
-                            ackconn!.quit().catch(() => { })
-                        } else {
-                            toDelete.add(connectionID)
-                        }
+                        clearInterval(pinger!)
+                        await blconn1!.del(`ack,${connectionID}`)
+                        blconn1!.quit().catch(() => { })
+                        ackconn!.quit().catch(() => { })
                         break
                     }
+                }
 
-                if (config.ackS3 || mode != "s3") {
+                if (mode != "s3") {
                     const extractIvACK = buffered!.subarray(0, 12)
                     const tagACK = buffered!.subarray(12, 28)
                     const encryptedChunkACK = buffered!.subarray(28)
