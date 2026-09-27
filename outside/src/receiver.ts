@@ -175,24 +175,9 @@ if (mode != 's3')
             tls: { servername: config.tls },
         })
 
-let blconn: Redis | null
-if (mode != 's3')
-    if (config.tls == "")
-        blconn = new Redis(config.connstring, {
-            maxRetriesPerRequest: null,
-            keepAlive: 10000,
-        })
-    else
-        blconn = new Redis(config.connstring, {
-            maxRetriesPerRequest: null,
-            keepAlive: 10000,
-            tls: { servername: config.tls },
-        })
-
 if (mode != "s3")
     try {
         await conn!.ping()
-        await blconn!.ping()
     } catch (e) {
     }
 
@@ -657,20 +642,34 @@ for (let index = 0; index < allowedPrefixes.length; index++)
 const sockets = new Map<string, { socket: Socket | undefined }>()
 setImmediate(async () => {
     if (mode != "s3") {
-        await Promise.all(allowedPrefixes.map(async (prefix) => {
-            try {
-                while (true) {
-                    if (!blconn)
-                        continue
-                    logger("SOMEHOW?")
-                    const payload = await blconn.brpopBuffer(`inform${prefix}`, 0)
-                    callback(payload?.[1]!)
+        for (let i = 0; i < allowedPrefixes.length; i++) {
+            setImmediate(async () => {
+                const blconn = config.tls == "" ? new Redis(config.connstring, {
+                    maxRetriesPerRequest: null,
+                    keepAlive: 10000,
+                }) : new Redis(config.connstring, {
+                    maxRetriesPerRequest: null,
+                    keepAlive: 10000,
+                    tls: { servername: config.tls },
+                })
+                setInterval(async () => {
+                    try {
+                        await blconn.ping()
+                    } catch (e) {
+                    }
+                }, 10000)
+                try {
+                    while (true) {
+                        logger("SOMEHOW?")
+                        const payload = await blconn.brpopBuffer(`inform${allowedPrefixes[i]}`, 0)
+                        callback(payload?.[1]!)
+                    }
+                } catch (e) {
+                    await new Promise(r => setTimeout(r, 500))
+                    logger("Bad shit redis " + e, "error")
                 }
-            } catch (e) {
-                await new Promise(r => setTimeout(r, 500))
-                logger("Bad shit redis " + e, "error")
-            }
-        }))
+            })
+        }
     } else {
         logger("I reach there")
         await Promise.all(allowedPrefixes.map(async (prefix) => {
@@ -791,7 +790,6 @@ if (mode != "s3")
     setInterval(async () => {
         try {
             await conn!.ping()
-            await blconn!.ping()
         } catch (e) {
         }
     }, 10000)
