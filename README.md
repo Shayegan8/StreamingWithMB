@@ -28,6 +28,7 @@ Sample config.json that should be in current directory you run the proxy client
     "pathstyle": true, // Just if you want add the bucket name like a url path at the end
     "deleteManual": true, // If your endpoint dosent support DeleteObjects command you need this
     "minimalClient": true, // If you want a client dont restrict http calls and manage open sockets and etc or your provider dosent support new sdks you need this 
+    "pingAllT": false, // some redis endpoints get timeout, i kept all redis connections alive however it might not help
     "prefix": "0" // this prefix should be in config of vpn server
 }
 ```
@@ -46,7 +47,8 @@ config.json sample for vpn server
     "bucket": "and your bucket",
     "pathstyle": true, // Just if you want add the bucket name like a url path at the end
     "deleteManual": true, // If your endpoint dosent support DeleteObjects command you need this
-    "minimalClient": true, // If you want a client dont restrict http calls and manage open sockets and etc or your provider dosent support new sdks you need this 
+    "minimalClient": true, // If you want a client dont restrict http calls and manage open sockets and etc or your provider dosent support new sdks you need this,
+    "pingAllT": false, // some redis endpoints get timeout, i kept all redis connections alive however it might not help
     "prefixes": [
         "0",
         "1"
