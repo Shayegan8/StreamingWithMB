@@ -661,9 +661,10 @@ process.on('uncaughtException', (error) => {
 const finishCallback = async () => {
     logger("Stopping the server", "info")
     server.close()
-    if (conn)
+    if (conn) {
+        logger("Flushing all")
         await conn.flushdb()
-    else {
+    } else {
         try {
             if (config.minimalClient) {
                 const ls = await Array.fromAsync(sclient.listObjects({ prefix: "" }), (entry) => entry.key)
