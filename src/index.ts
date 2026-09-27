@@ -386,7 +386,7 @@ const server = net.createServer((socket) => {
                         const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                         const tag = cipher.getAuthTag()
                         if (conn)
-                            await conn.lpush(`inform`, Buffer.concat([iv, tag, encryptedMsg]))
+                            await conn.lpush(`inform${config.prefix}`, Buffer.concat([iv, tag, encryptedMsg]))
                         else {
                             const key = crypto.randomBytes(10).toString('hex')
                             if (config.minimalClient) {

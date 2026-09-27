@@ -653,18 +653,20 @@ for (let index = 0; index < allowedPrefixes.length; index++)
 const sockets = new Map<string, { socket: Socket | undefined }>()
 setImmediate(async () => {
     if (mode != "s3") {
-        try {
-            while (true) {
-                if (!blconn)
-                    continue
-                logger("SOMEHOW?")
-                const payload = await blconn.brpopBuffer(`inform`, 20)
-                callback(payload?.[1]!)
+        await Promise.all(allowedPrefixes.map(async (prefix) => {
+            try {
+                while (true) {
+                    if (!blconn)
+                        continue
+                    logger("SOMEHOW?")
+                    const payload = await blconn.brpopBuffer(`inform${prefix}`, 20)
+                    callback(payload?.[1]!)
+                }
+            } catch (e) {
+                await new Promise(r => setTimeout(r, 500))
+                logger("Bad shit redis " + e, "error")
             }
-        } catch (e) {
-            await new Promise(r => setTimeout(r, 500))
-            logger("Bad shit redis " + e, "error")
-        }
+        }))
     } else {
         logger("I reach there")
         await Promise.all(allowedPrefixes.map(async (prefix) => {
