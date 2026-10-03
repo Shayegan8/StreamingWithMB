@@ -311,7 +311,7 @@ const server = net.createServer((socket) => {
                                     else {
                                         const concatious = Buffer.concat(buff)
                                         const preMsg = Buffer.alloc(20 + concatious.length)
-                                        let sLength = `${concatious.length * (1024 * 1024)}`
+                                        let sLength = `${max * (1024 * 1024)}`
                                         for (let index = sLength.length; index < 11; index++)
                                             sLength = sLength.concat("s")
                                         Buffer.from(sLength).copy(preMsg, 0, 0, 10)
@@ -554,8 +554,7 @@ const server = net.createServer((socket) => {
                                         break
                                     }
                                     sent = false
-                                    if (mode != "s3")
-                                        ackChange(rtt, max, connectionID, response)
+                                    ackChange(rtt, max, connectionID, response)
 
                                     const extractIv = response!.subarray(0, 12)
                                     const tag = response!.subarray(12, 28)
