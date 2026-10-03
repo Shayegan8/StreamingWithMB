@@ -535,10 +535,8 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                                 clearTimeout(timeout)
                             length += data.length
                             buffass.push(data)
-                            pqueue.add(() => {
+                            pqueue.add(async () => {
                                 if (length > ack) { // bigger than 2mb
-                                    if (timeout)
-                                        clearTimeout(timeout)
                                     let msg: Buffer<ArrayBuffer> | null
                                     let newVersion: Buffer
                                     if (mode != "s3")
@@ -558,13 +556,13 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                                     const tag = cipher.getAuthTag()
                                     if (mode != "s3") {
                                         logger("YOU MEAN IM PUSHING TO THIS ASSHOLE?")
-                                        conn!.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                        await conn!.lpush(`appserver,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                     } else {
                                         try {
                                             if (config.minimalClient) {
-                                                sclient.putObject(`appserver,${connectionID}/${outSeq}`, Buffer.concat([iv, tag, encryptedMsg]))
+                                                await sclient.putObject(`appserver,${connectionID}/${outSeq}`, Buffer.concat([iv, tag, encryptedMsg]))
                                             } else {
-                                                s3.send(new PutObjectCommand({
+                                                await s3.send(new PutObjectCommand({
                                                     Bucket: bucketName,
                                                     Key: `appserver,${connectionID}/${outSeq}`,
                                                     ACL: 'private',
