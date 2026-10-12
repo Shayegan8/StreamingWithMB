@@ -165,19 +165,22 @@ if (mode == "s3")
 const bucketName = config.bucket
 
 let conn: Redis | null
-if (mode != 's3')
-    if (config.tls == "")
+if (mode != 's3') {
+    conn = new Redis(config.connstring, {
+        maxRetriesPerRequest: null,
+        keepAlive: 10000,
+        tls: config.tls == "" ? {} : { servername: config.tls }
+    })
+    conn!.on('end', () => {
+        logger("Lemme see thi happens or not conn")
+        conn!.disconnect()
         conn = new Redis(config.connstring, {
             maxRetriesPerRequest: null,
             keepAlive: 10000,
+            tls: config.tls == "" ? {} : { servername: config.tls }
         })
-    else
-        conn = new Redis(config.connstring, {
-            maxRetriesPerRequest: null,
-            keepAlive: 10000,
-            tls: { servername: config.tls },
-        })
-
+    })
+}
 if (mode != "s3" && config.pingAllT)
     try {
         await conn!.ping()
@@ -293,33 +296,39 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
         const atyp = things[3]!
         try {
             let blconn1: Redis | null
-            if (mode != "s3")
-                if (config.tls == "")
+            if (mode != "s3") {
+                blconn1 = new Redis(config.connstring, {
+                    maxRetriesPerRequest: null,
+                    keepAlive: 10000,
+                    tls: config.tls == "" ? {} : { servername: config.tls }
+                })
+                blconn1.on('end', () => {
+                    logger("Lemme see thi happens or not blconn1")
+                    blconn1!.disconnect()
                     blconn1 = new Redis(config.connstring, {
                         maxRetriesPerRequest: null,
-                        keepAlive: 10000
+                        keepAlive: 10000,
+                        tls: config.tls == "" ? {} : { servername: config.tls }
                     })
-                else
-                    blconn1 = new Redis(config.connstring, {
-                        maxRetriesPerRequest: null,
-                        tls: { servername: config.tls },
-                        keepAlive: 10000
-                    })
-            else {
+                })
             }
             let ackconn: Redis | null
-            if (mode != "s3")
-                if (config.tls == "")
+            if (mode != "s3") {
+                ackconn = new Redis(config.connstring, {
+                    maxRetriesPerRequest: null,
+                    keepAlive: 10000,
+                    tls: config.tls == "" ? {} : { servername: config.tls }
+                })
+                ackconn.on('end', () => {
+                    logger("Lemme see thi happens or not ackconn")
+                    ackconn!.disconnect()
                     ackconn = new Redis(config.connstring, {
                         maxRetriesPerRequest: null,
-                        keepAlive: 10000
+                        keepAlive: 10000,
+                        tls: config.tls == "" ? {} : { servername: config.tls }
                     })
-                else
-                    ackconn = new Redis(config.connstring, {
-                        maxRetriesPerRequest: null,
-                        tls: { servername: config.tls },
-                        keepAlive: 10000
-                    })
+                })
+            }
 
             if (mode != "s3" && config.pingAllT)
                 try {
@@ -647,14 +656,21 @@ setImmediate(async () => {
     if (mode != "s3") {
         for (let i = 0; i < allowedPrefixes.length; i++) {
             setImmediate(async () => {
-                const blconn = config.tls == "" ? new Redis(config.connstring, {
+                let blconn = new Redis(config.connstring, {
                     maxRetriesPerRequest: null,
                     keepAlive: 10000,
-                }) : new Redis(config.connstring, {
-                    maxRetriesPerRequest: null,
-                    keepAlive: 10000,
-                    tls: { servername: config.tls },
+                    tls: config.tls == "" ? {} : { servername: config.tls }
                 })
+                blconn!.on('end', () => {
+                    logger("Lemme see thi happens or not conn")
+                    blconn!.disconnect()
+                    blconn = new Redis(config.connstring, {
+                        maxRetriesPerRequest: null,
+                        keepAlive: 10000,
+                        tls: config.tls == "" ? {} : { servername: config.tls }
+                    })
+                })
+
                 if (mode != "s3" && config.pingAllT)
                     setInterval(async () => {
                         try {
