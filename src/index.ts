@@ -139,22 +139,18 @@ if (mode == "s3")
 const bucketName = config.bucket
 
 let conn: Redis | null
-if (mode != 's3') {
-    conn = new Redis(config.connstring, {
-        maxRetriesPerRequest: null,
-        keepAlive: 10000,
-        tls: config.tls == "" ? {} : { servername: config.tls }
-    })
-    conn!.on('end', () => {
-        logger("Lemme see thi happens or not conn")
-        conn!.disconnect()
+if (mode != 's3')
+    if (config.tls == "")
         conn = new Redis(config.connstring, {
             maxRetriesPerRequest: null,
             keepAlive: 10000,
-            tls: config.tls == "" ? {} : { servername: config.tls }
         })
-    })
-}
+    else
+        conn = new Redis(config.connstring, {
+            maxRetriesPerRequest: null,
+            keepAlive: 10000,
+            tls: { servername: config.tls }
+        })
 
 let ack: Redis | null
 if (mode != 's3')
@@ -330,9 +326,9 @@ const server = net.createServer((socket) => {
                                     const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
                                     const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                                     const tag = cipher.getAuthTag()
-                                    if (conn)
+                                    if (conn) {
                                         await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
-                                    else {
+                                    } else {
                                         rtt = Date.now()
                                         if (config.minimalClient)
                                             await sclient.putObject(`proxy,${connectionID}/${inSeq}`, Buffer.concat([iv, tag, encryptedMsg])).catch((reason) => {
@@ -424,25 +420,19 @@ const server = net.createServer((socket) => {
 
                         }
                         let blconn: Redis | null
-
                         const ctl = new AbortController()
-                        if (mode != "s3") {
-                            blconn = new Redis(config.connstring, {
-                                maxRetriesPerRequest: null,
-                                keepAlive: 10000,
-                                tls: config.tls == "" ? {} : { servername: config.tls }
-                            })
-                            blconn!.on('end', () => {
-                                logger("Lemme see thi happens or not conn")
-                                conn!.disconnect()
-                                conn = new Redis(config.connstring, {
+                        if (mode != "s3")
+                            if (config.tls == "")
+                                blconn = new Redis(config.connstring, {
                                     maxRetriesPerRequest: null,
                                     keepAlive: 10000,
-                                    tls: config.tls == "" ? {} : { servername: config.tls }
                                 })
-                            })
-                        }
-
+                            else
+                                blconn = new Redis(config.connstring, {
+                                    maxRetriesPerRequest: null,
+                                    keepAlive: 10000,
+                                    tls: { servername: config.tls }
+                                })
                         let pinger: NodeJS.Timeout | null
                         if (mode != "s3" && config.pingAllT)
                             pinger = setInterval(async () => {
