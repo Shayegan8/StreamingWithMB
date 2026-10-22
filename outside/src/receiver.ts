@@ -647,6 +647,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
 }
 
 const allowedPrefixes = config.prefixes
+let usedInforms: string[] = []
 const performingQueues: PQueue<PriorityQueue, QueueAddOptions>[] = []
 for (let index = 0; index < allowedPrefixes.length; index++)
     performingQueues.push(new PQueue({ concurrency: config.concurrency }))
@@ -696,14 +697,20 @@ setImmediate(async () => {
             while (true) {
                 try {
                     if (config.minimalClient) {
-                        const ls = await Array.fromAsync(sclient.listObjects({ prefix: prefix + "/informs/" }), (entry) => entry.key)
-                        if (!ls.length) {
+                        const ls = new Map((await Array.fromAsync(sclient.listObjects({ prefix: prefix + "/informs/" }), (entry) => entry.key)).map(k => [k, null]))
+
+                        if (!ls.size) {
                             await new Promise(r => setTimeout(r, 500))
                             continue
                         }
-                        logger("list object")
+
+                        const newLs = ls
+                        for (const [element] of newLs) {
+                            if (usedInforms.includes(element))
+                                ls.delete(element)
+                        }
                         await performingQueues[allowedPrefixes.indexOf(prefix)]!.add(async () => {
-                            await Promise.all(ls.map(async (key) => {
+                            await Promise.all(ls.entries().map(async ([key]) => {
                                 try {
                                     logger("OK HERE!" + key)
                                     const daljerk = await sclient.getObject(key)
@@ -718,10 +725,18 @@ setImmediate(async () => {
                         }).catch((e) => {
                             logger("Problem in loop " + e, "error")
                         })
+                        for (const [inform] of ls)
+                            usedInforms.push(inform)
 
-                        await Promise.all(ls.map(async (key) => {
-                            await sclient.deleteObject(key)
-                        }))
+                        setImmediate(async () => {
+                            if (usedInforms.length >= 10000) {
+                                await Promise.all(usedInforms.map(async (key) => {
+                                    await sclient.deleteObject(key)
+                                }))
+                                usedInforms = []
+                            }
+                        })
+
                     } else {
                         const data = await s32.send(new ListObjectsV2Command({
                             Bucket: bucketName,
@@ -732,11 +747,16 @@ setImmediate(async () => {
                             await new Promise(r => setTimeout(r, 500))
                             continue
                         }
-                        let sagjerk = data.Contents!.map((each) => each.Key!)
+                        let sagjerk = new Map(data.Contents!.map((each) => each.Key!).map(k => [k, null]))
 
+                        const newLs = sagjerk
+                        for (const [element] of newLs) {
+                            if (usedInforms.includes(element))
+                                sagjerk.delete(element)
+                        }
                         try {
                             await performingQueues[allowedPrefixes.indexOf(prefix)]!.add(async () => {
-                                Promise.all(sagjerk.map(async (key) => {
+                                Promise.all(sagjerk.entries().map(async ([key]) => {
                                     try {
                                         logger("OK HERE!")
                                         const daljerk = await s32.send(new GetObjectCommand({
@@ -758,44 +778,51 @@ setImmediate(async () => {
                             logger("Bad delete " + e)
                         }
 
-                        logger("This called faster?")
-                        if (!config.deleteManual) {
-                            try {
-                                await justForDelete.send(
-                                    new DeleteObjectsCommand({
-                                        Bucket: bucketName,
-                                        Delete: {
-                                            Objects: sagjerk.map(Key => ({ Key })),
-                                        },
-                                    })
-                                )
-                            } catch (e) {
-                                logger("Failed to delete with DeleteObjectsCommand trying with DeleteObject", "info")
-                                try {
-                                    await Promise.all(sagjerk.map(async (key) => {
-                                        await justForDelete.send(new DeleteObjectCommand({
-                                            Bucket: bucketName,
-                                            Key: key
+                        for (const [inform] of sagjerk)
+                            usedInforms.push(inform)
+
+                        setImmediate(async () => {
+                            if (usedInforms.length >= 10000) {
+                                if (!config.deleteManual) {
+                                    try {
+                                        await justForDelete.send(
+                                            new DeleteObjectsCommand({
+                                                Bucket: bucketName,
+                                                Delete: {
+                                                    Objects: usedInforms.map(Key => ({ Key })),
+                                                },
+                                            })
+                                        )
+                                    } catch (e) {
+                                        logger("Failed to delete with DeleteObjectsCommand trying with DeleteObject", "info")
+                                        try {
+                                            await Promise.all(usedInforms.map(async (key) => {
+                                                await justForDelete.send(new DeleteObjectCommand({
+                                                    Bucket: bucketName,
+                                                    Key: key
+                                                }))
+                                            }))
+                                        } catch (e) {
+                                            logger("Ok this failed too? why?")
+                                            logger(e as any)
+                                        }
+                                    }
+                                } else {
+                                    try {
+                                        await Promise.all(usedInforms.map(async (key) => {
+                                            await justForDelete.send(new DeleteObjectCommand({
+                                                Bucket: bucketName,
+                                                Key: key
+                                            }))
                                         }))
-                                    }))
-                                } catch (e) {
-                                    logger("Ok this failed too? why?")
-                                    logger(e as any)
+                                    } catch (e) {
+                                        logger("Ok this failed too? why?")
+                                        logger(e as any)
+                                    }
                                 }
+                                usedInforms = []
                             }
-                        } else {
-                            try {
-                                await Promise.all(sagjerk.map(async (key) => {
-                                    await justForDelete.send(new DeleteObjectCommand({
-                                        Bucket: bucketName,
-                                        Key: key
-                                    }))
-                                }))
-                            } catch (e) {
-                                logger("Ok this failed too? why?")
-                                logger(e as any)
-                            }
-                        }
+                        })
                     }
                 } catch (e) {
                     await new Promise(r => setTimeout(r, 500))
