@@ -163,11 +163,13 @@ if (mode == "s3")
     }, 10000)
 
 const bucketName = config.bucket
+const interACKPool = new PQueue({ concurrency: 1000 })
 
-async function interAck(bandwidth: number, aborti: AbortController, connectionID: string, inSeq: string) {
+async function interAck(bandwidth: {dumber: number}, aborti: AbortController, connectionID: string, inSeq: string) {
     while (mode == "s3" ? !(aborti.signal.aborted) : true) {
         const now = Date.now()
         const bandkir = await popperBuffer2(`proxy,${connectionID}/${inSeq}`, connectionID, aborti)
+        bandwidth.dumber = parseInt(Buffer.from(bandkir!).toString('utf8'))
         const nower = Date.now()
         await new Promise((resolve) => {
             if ((nower - now) < 3000)
@@ -364,7 +366,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                     }
                 }, 10000)
 
-            let bandwidth = 512 * 1024
+            let bandwidth = {dumber: 512 * 1024}
             let inSeq = "0"
             let outSeq = "0"
             const aborti = new AbortController()
@@ -375,7 +377,9 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 } else {
                     logger(`proxy,${connectionID}/${inSeq}`)
                     request = await popperBuffer2(`proxy,${connectionID}/${inSeq}`, connectionID, aborti)
-                    interAck(bandwidth, aborti, connectionID, inSeq)
+                    interACKPool.add(async () => {
+                        interAck(bandwidth, aborti, connectionID, inSeq)
+                    })
                 }
                 logger("IS this because of that proxy, shit?")
                 if (!request) {
@@ -442,7 +446,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                     const decipherACK = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIvACK)
                     decipherACK.setAuthTag(tagACK)
                     const decryptedChunkACK = Buffer.concat([decipherACK.update(encryptedChunkACK), decipherACK.final()])
-                    bandwidth = parseInt(decryptedChunkACK.toString('utf8'))
+                    bandwidth.dumber = parseInt(decryptedChunkACK.toString('utf8'))
 
                 }
 
@@ -550,7 +554,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                             length += data.length
                             buffass.push(data)
                             pqueue.add(async () => {
-                                if (length > bandwidth) { // bigger than 2mb
+                                if (length > bandwidth.dumber) { // bigger than 2mb
                                     let msg: Buffer<ArrayBuffer> | null
                                     let newVersion: Buffer
                                     if (mode != "s3")
