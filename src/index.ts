@@ -314,16 +314,11 @@ const server = net.createServer((socket) => {
                                         msg = Buffer.concat(buff)
                                     else {
                                         const concatious = Buffer.concat(buff)
-                                        const preMsg = Buffer.alloc(20 + concatious.length)
-                                        let sLength = `${max}`
-                                        logger("The packet should be limited with " + sLength)
-                                        for (let index = sLength.length; index < 11; index++)
-                                            sLength = sLength.concat("s")
-                                        Buffer.from(sLength).copy(preMsg, 0, 0, 10)
+                                        const preMsg = Buffer.alloc(10 + concatious.length)
                                         const jerk = crypto.randomBytes(10)
                                         newVersion = jerk
-                                        jerk.copy(preMsg, 10)
-                                        concatious.copy(preMsg, 20, 0)
+                                        jerk.copy(preMsg, 0)
+                                        concatious.copy(preMsg, 10, 0)
                                         msg = preMsg
                                     }
                                     const iv = crypto.randomBytes(12)
@@ -566,7 +561,17 @@ const server = net.createServer((socket) => {
                                     }
                                     sent = false
                                     bandwidthChange(rtt, max, connectionID, response)
-
+                                    if (mode == "s3")
+                                        sclient.putObject(`proxy,ack,${connectionID}/${inSeq}`, Buffer.from(`${max}`))
+                                    else
+                                        s3g.send(new PutObjectCommand({
+                                            Bucket: bucketName,
+                                            Key: `proxy,ack,${connectionID}/${inSeq}`,
+                                            ACL: 'private',
+                                            Body: Buffer.from(`${max}`),
+                                        })).catch((reason) => {
+                                            logger(`Problem with pushing batch after informing ${reason}`, "error")
+                                        })
                                     const extractIv = response!.subarray(0, 12)
                                     const tag = response!.subarray(12, 28)
                                     const encryptedChunk = response!.subarray(28)

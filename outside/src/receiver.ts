@@ -164,6 +164,18 @@ if (mode == "s3")
 
 const bucketName = config.bucket
 
+async function interAck(bandwidth: number, aborti: AbortController, connectionID: string, inSeq: string) {
+    while (mode == "s3" ? !(aborti.signal.aborted) : true) {
+        const now = Date.now()
+        const bandkir = await popperBuffer2(`proxy,${connectionID}/${inSeq}`, connectionID, aborti)
+        const nower = Date.now()
+        await new Promise((resolve) => {
+            if ((nower - now) < 3000)
+                setTimeout(resolve, nower - now)
+        })
+    }
+}
+
 let conn: Redis | null
 if (mode != 's3') {
     conn = new Redis(config.connstring, {
@@ -358,11 +370,12 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
             const aborti = new AbortController()
             while (mode == "s3" ? !(aborti.signal.aborted) : true) {
                 let request: Uint8Array<ArrayBufferLike> | undefined
-                if (mode != "s3")
+                if (mode != "s3") {
                     request = (await blconn1!.brpopBuffer(`proxy,${connectionID}`, 0))?.[1]
-                else {
+                } else {
                     logger(`proxy,${connectionID}/${inSeq}`)
                     request = await popperBuffer2(`proxy,${connectionID}/${inSeq}`, connectionID, aborti)
+                    interAck(bandwidth, aborti, connectionID, inSeq)
                 }
                 logger("IS this because of that proxy, shit?")
                 if (!request) {
@@ -404,17 +417,10 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                 }
                 let realMsg: Buffer<ArrayBuffer>
                 if (mode == "s3") {
-                    const shayeganedLength = decryptedChunk.subarray(0, 10).toString('utf8')
                     logger("Ok this is")
-                    const splitedSL = shayeganedLength.split('s')
-                    logger(`Captured SL: ${shayeganedLength}, ${splitedSL[0]}, ${splitedSL}`)
-                    if (splitedSL.length != 0)
-                        bandwidth = parseInt(splitedSL[0]!)
-                    else
-                        bandwidth = parseInt(shayeganedLength)
-                    const newVersion = decryptedChunk.subarray(10, 20)
+                    const newVersion = decryptedChunk.subarray(0, 10)
                     inSeq = newVersion.toString('hex')
-                    realMsg = decryptedChunk.subarray(20)
+                    realMsg = decryptedChunk.subarray(10)
                 }
 
                 let buffered: Uint8Array<ArrayBufferLike> | undefined
@@ -430,9 +436,6 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                         ackconn!.quit().catch(() => { })
                         break
                     }
-                }
-
-                if (mode != "s3") {
                     const extractIvACK = buffered!.subarray(0, 12)
                     const tagACK = buffered!.subarray(12, 28)
                     const encryptedChunkACK = buffered!.subarray(28)
@@ -440,7 +443,9 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                     decipherACK.setAuthTag(tagACK)
                     const decryptedChunkACK = Buffer.concat([decipherACK.update(encryptedChunkACK), decipherACK.final()])
                     bandwidth = parseInt(decryptedChunkACK.toString('utf8'))
+
                 }
+
                 if (!sockets.has(connectionID)) {
                     let fastestWorkingIP: string | undefined
                     if (atyp === "3")
