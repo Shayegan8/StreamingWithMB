@@ -5,7 +5,7 @@ import { exit } from 'process'
 import PQueue, { PriorityQueue, type QueueAddOptions } from 'p-queue'
 import crypto from 'node:crypto'
 import { S3Client as S3Light } from '@bradenmacdonald/s3-lite-client'
-import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, paginateListObjectsV2, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import https from 'https'
 
 import config from "../config.json" with {type: 'json'}
@@ -656,7 +656,7 @@ let usedInforms: string[] = []
 const performingQueues: PQueue<PriorityQueue, QueueAddOptions>[] = []
 for (let index = 0; index < allowedPrefixes.length; index++)
     performingQueues.push(new PQueue({ concurrency: config.concurrency }))
-
+const promisePool = new PQueue({ concurrency: 1000 })
 const sockets = new Map<string, { socket: Socket | undefined }>()
 setImmediate(async () => {
     if (mode != "s3") {
@@ -710,11 +710,21 @@ setImmediate(async () => {
                         }
 
                         const newLs = ls
+                        const containList: string[] = []
                         for (const [element] of newLs) {
-                            if (usedInforms.includes(element))
+                            if (usedInforms.includes(element)) {
+                                containList.push(element)
                                 ls.delete(element)
+                            }
                         }
-                        await performingQueues[allowedPrefixes.indexOf(prefix)]!.add(async () => {
+                        promisePool.add(async () => {
+                            logger("Deleting someshitaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                            await Promise.all(containList.map(async (key) => {
+                                await sclient.deleteObject(key)
+                            }))
+                            logger("Deleeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeted?")
+                        })
+                        performingQueues[allowedPrefixes.indexOf(prefix)]!.add(async () => {
                             await Promise.all(ls.entries().map(async ([key]) => {
                                 try {
                                     logger("OK HERE!" + key)
@@ -733,16 +743,6 @@ setImmediate(async () => {
                         for (const [inform] of ls)
                             usedInforms.push(inform)
 
-                        setImmediate(async () => {
-                            if (usedInforms.length >= 10000) {
-                                logger("IMM FUCKING DELETINGGGGGG............")
-                                await Promise.all(usedInforms.map(async (key) => {
-                                    await sclient.deleteObject(key)
-                                }))
-                                usedInforms = []
-                            }
-                        })
-
                     } else {
                         const data = await s32.send(new ListObjectsV2Command({
                             Bucket: bucketName,
@@ -756,15 +756,61 @@ setImmediate(async () => {
                         let sagjerk = new Map(data.Contents!.map((each) => each.Key!).map(k => [k, null]))
 
                         const newLs = sagjerk
+                        const containList: string[] = []
                         for (const [element] of newLs) {
-                            if (usedInforms.includes(element))
+                            if (usedInforms.includes(element)) {
+                                containList.push(element)
                                 sagjerk.delete(element)
+                            }
                         }
-                        try {
-                            await performingQueues[allowedPrefixes.indexOf(prefix)]!.add(async () => {
-                                Promise.all(sagjerk.entries().map(async ([key]) => {
+                        promisePool.add(async () => {
+                            logger("OOOOOOOOOOOOOOOK I WANNNNNNNNNNAAAAA DELETE " + containList.length)
+                            if (!config.deleteManual) {
+                                try {
+                                    await justForDelete.send(
+                                        new DeleteObjectsCommand({
+                                            Bucket: bucketName,
+                                            Delete: {
+                                                Objects: containList.map(Key => ({ Key })),
+                                            },
+                                        })
+                                    )
+                                } catch (e) {
+                                    logger("Failed to delete with DeleteObjectsCommand trying with DeleteObject", "info")
                                     try {
-                                        logger("OK HERE!")
+                                        await Promise.all(containList.map(async (key) => {
+                                            await justForDelete.send(new DeleteObjectCommand({
+                                                Bucket: bucketName,
+                                                Key: key
+                                            }))
+                                        }))
+                                    } catch (e) {
+                                        logger("Ok this failed too? why?")
+                                        logger(e as any)
+                                    }
+                                }
+                            } else {
+                                try {
+                                    await Promise.all(containList.map(async (key) => {
+                                        await justForDelete.send(new DeleteObjectCommand({
+                                            Bucket: bucketName,
+                                            Key: key
+                                        }))
+                                    }))
+                                } catch (e) {
+                                    logger("Ok this failed too? why?")
+                                    logger(e as any)
+                                }
+                            }
+                            logger("FINIIIIIIIIIISHED?")
+                        })
+
+                        try {
+                            performingQueues[allowedPrefixes.indexOf(prefix)]!.add(async () => {
+                                logger("OOOOOOOOOOOOOOOK I WANNNNNNNNNNAAAAA DELETE " + containList.length)
+                                await Promise.all(sagjerk.entries().map(async ([key]) => {
+                                    try {
+                                        logger("OK HERE! " + key)
                                         const daljerk = await s32.send(new GetObjectCommand({
                                             Bucket: bucketName, Key: key
                                         }))
@@ -790,43 +836,6 @@ setImmediate(async () => {
                         setImmediate(async () => {
                             if (usedInforms.length >= 10000) {
                                 logger("Im deeeeeeeeeeeeeeeeeeeeeeeleeeeeeeeeeeeeetinggggggggggggggggg")
-                                if (!config.deleteManual) {
-                                    try {
-                                        await justForDelete.send(
-                                            new DeleteObjectsCommand({
-                                                Bucket: bucketName,
-                                                Delete: {
-                                                    Objects: usedInforms.map(Key => ({ Key })),
-                                                },
-                                            })
-                                        )
-                                    } catch (e) {
-                                        logger("Failed to delete with DeleteObjectsCommand trying with DeleteObject", "info")
-                                        try {
-                                            await Promise.all(usedInforms.map(async (key) => {
-                                                await justForDelete.send(new DeleteObjectCommand({
-                                                    Bucket: bucketName,
-                                                    Key: key
-                                                }))
-                                            }))
-                                        } catch (e) {
-                                            logger("Ok this failed too? why?")
-                                            logger(e as any)
-                                        }
-                                    }
-                                } else {
-                                    try {
-                                        await Promise.all(usedInforms.map(async (key) => {
-                                            await justForDelete.send(new DeleteObjectCommand({
-                                                Bucket: bucketName,
-                                                Key: key
-                                            }))
-                                        }))
-                                    } catch (e) {
-                                        logger("Ok this failed too? why?")
-                                        logger(e as any)
-                                    }
-                                }
                                 usedInforms = []
                             }
                         })
