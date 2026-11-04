@@ -224,15 +224,15 @@ const popperBuffer = async (key: string, connectionID: string, abrt: AbortContro
     }
 }
 
-const ackChange = (rtt: number, max: number, connectionID: string, response: Uint8Array<ArrayBufferLike>) => {
+const bandwidthChange = (rtt: number, max: number, connectionID: string, response: Uint8Array<ArrayBufferLike>) => {
     const meseaured = Date.now() - rtt
-    if (meseaured > 10000)
-        max = Math.max((max / 2), 256 * 1024)
-    else
-        if (max < (1024 * 1024 * 2))
-            max += (500 * 1024)
-    if (max > (2 * 1024 * 1024))
-        max = Math.max((max / 2), 256 * 1024)
+    if ((meseaured) > 4000) {
+        max -= (1024 * 100)
+        max = Math.max(max, 64 * 1024)
+    } else {
+        max += (1024 * 100)
+        max = Math.max(100 * 1024, max)
+    }
     logger(`RTT ${connectionID}:${String(Math.fround(meseaured / (1000))).slice(0, 5)}s for received packet with length of ${Math.fround(response.length / (1024 * 1024))}mb`, "info")
 }
 
@@ -295,7 +295,7 @@ const server = net.createServer((socket) => {
                         let rtt = 0
 
 
-                        let max = 2 * 1024 * 1024
+                        let max = 512 * 1024
                         let inSeq = "0"
                         let sent = false
                         let inatervo: NodeJS.Timeout | null
@@ -565,7 +565,7 @@ const server = net.createServer((socket) => {
                                         break
                                     }
                                     sent = false
-                                    ackChange(rtt, max, connectionID, response)
+                                    bandwidthChange(rtt, max, connectionID, response)
 
                                     const extractIv = response!.subarray(0, 12)
                                     const tag = response!.subarray(12, 28)

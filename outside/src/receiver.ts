@@ -187,7 +187,6 @@ if (mode != "s3" && config.pingAllT)
     } catch (e) {
     }
 
-
 //DNS RESOLVE, for now its not optimized but works atleast
 const workingDNSes = new Map<string, { ip: string, requiredTime: number }>() // Map<address, ip>
 let fastestDNSes = new Map<string, string>() //Map<address, fastest ip>
@@ -352,7 +351,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                     }
                 }, 10000)
 
-            let ack = 2 * 1024 * 1024
+            let bandwidth = 2 * 1024 * 1024
             let inSeq = "0"
             let outSeq = "0"
             const aborti = new AbortController()
@@ -409,9 +408,9 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                     const splitedSL = shayeganedLength.split('s')
                     logger(`Captured SL: ${shayeganedLength}, ${splitedSL[0]}, ${splitedSL}`)
                     if (splitedSL.length != 0)
-                        ack = parseInt(splitedSL[0]!)
+                        bandwidth = parseInt(splitedSL[0]!)
                     else
-                        ack = parseInt(shayeganedLength)
+                        bandwidth = parseInt(shayeganedLength)
                     const newVersion = decryptedChunk.subarray(10, 20)
                     inSeq = newVersion.toString('hex')
                     realMsg = decryptedChunk.subarray(20)
@@ -439,7 +438,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                     const decipherACK = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIvACK)
                     decipherACK.setAuthTag(tagACK)
                     const decryptedChunkACK = Buffer.concat([decipherACK.update(encryptedChunkACK), decipherACK.final()])
-                    ack = parseInt(decryptedChunkACK.toString('utf8'))
+                    bandwidth = parseInt(decryptedChunkACK.toString('utf8'))
                 }
                 if (!sockets.has(connectionID)) {
                     let fastestWorkingIP: string | undefined
@@ -545,7 +544,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                             length += data.length
                             buffass.push(data)
                             pqueue.add(async () => {
-                                if (length > ack) { // bigger than 2mb
+                                if (length > bandwidth) { // bigger than 2mb
                                     let msg: Buffer<ArrayBuffer> | null
                                     let newVersion: Buffer
                                     if (mode != "s3")
@@ -730,6 +729,7 @@ setImmediate(async () => {
 
                         setImmediate(async () => {
                             if (usedInforms.length >= 10000) {
+                                logger("IMM FUCKING DELETINGGGGGG............")
                                 await Promise.all(usedInforms.map(async (key) => {
                                     await sclient.deleteObject(key)
                                 }))
@@ -783,6 +783,7 @@ setImmediate(async () => {
 
                         setImmediate(async () => {
                             if (usedInforms.length >= 10000) {
+                                logger("Im deeeeeeeeeeeeeeeeeeeeeeeleeeeeeeeeeeeeetinggggggggggggggggg")
                                 if (!config.deleteManual) {
                                     try {
                                         await justForDelete.send(
@@ -852,6 +853,9 @@ const finishCallback = async () => {
         try {
             if (config.minimalClient) {
                 const ls = await Array.fromAsync(sclient.listObjects({ prefix: "" }), (entry) => entry.key)
+                for (const element of ls) {
+                    logger("Im deleting this " + element)
+                }
                 await Promise.all(ls.map(async (key) => {
                     await sclient.deleteObject(key)
                 }))
@@ -863,8 +867,11 @@ const finishCallback = async () => {
                 )
                 let sagjerk: { Key: string }[] = []
                 if (data.Contents && data.Contents.length != 0) {
-                    for (const element of data.Contents)
+                    for (const element of data.Contents) {
+                        logger("hooooooooooooooooooooooooooooooooooooooooooooooooooooooo")
                         sagjerk.push({ Key: element.Key! })
+                    }
+                    logger("dayoooooooooooooooooooooooooooooooooooooooooooooooooooooooos\n" + sagjerk.length)
                     if (!config.deleteManual) {
                         try {
                             logger("OK SO HERE???")
