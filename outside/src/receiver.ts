@@ -187,6 +187,7 @@ if (mode != "s3" && config.pingAllT)
     } catch (e) {
     }
 
+
 //DNS RESOLVE, for now its not optimized but works atleast
 const workingDNSes = new Map<string, { ip: string, requiredTime: number }>() // Map<address, ip>
 let fastestDNSes = new Map<string, string>() //Map<address, fastest ip>
@@ -351,7 +352,7 @@ const callback = (payload: Uint8Array<ArrayBufferLike>) => {
                     }
                 }, 10000)
 
-            let bandwidth = 2 * 1024 * 1024
+            let bandwidth = 512 * 1024
             let inSeq = "0"
             let outSeq = "0"
             const aborti = new AbortController()
