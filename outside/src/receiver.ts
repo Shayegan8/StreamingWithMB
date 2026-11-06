@@ -97,6 +97,9 @@ if (mode == "http") {
                 }
                 sockets.get(connectionID)?.socket?.destroy()
                 sockets.delete(connectionID)
+                resp.writeHead(203)
+                resp.end()
+                return 
             } else if (req.url == "/inform") {
                 logger("URL contains inform")
                 const informRequest: Buffer[] = []
@@ -169,6 +172,11 @@ if (mode == "http") {
                         sockets.delete(connectionID)
                         return
                     }
+
+                    resp.writeHead(202)
+                    resp.end()
+                    logger("I wrote for inform")
+                    return
                 }
             } else { // real request, /uuid&bandwidth
                 const shits = req.url?.split('/')
@@ -235,6 +243,7 @@ if (mode == "http") {
                                 const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
                                 const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                                 const tag = cipher.getAuthTag()
+                                logger("Its because of there")
                                 resp.writeHead(200)
                                 resp.end(Buffer.concat([iv, tag, encryptedMsg]))
                                 buffass = []
