@@ -1039,6 +1039,8 @@ if (mode == "http") {
     })
 
     const finishCallback = async () => {
+        if (mode == "http")
+            return
         if (conn)
             await conn.flushdb()
         else {

@@ -324,12 +324,18 @@ const server = net.createServer((socket) => {
                                     const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                                     const tag = cipher.getAuthTag()
                                     if (mode == "http") {
+                                        const shit = Buffer.concat([iv, tag, encryptedMsg])
                                         const req = https.request({
                                             hostname: config.hostname,
                                             port: 443,
-                                            path: `/${connectionID}&${max.bandwidth}`
+                                            path: `/${connectionID}&${max.bandwidth}`,
+                                            method: 'POST',
+                                            headers: {
+                                                'Content-Type': 'application/octet-stream',
+                                                'Content-Length': shit.length
+                                            }
                                         })
-                                        req.write(Buffer.concat([iv, tag, encryptedMsg]))
+                                        req.write(shit)
                                         req.end()
                                     } else if (conn)
                                         await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
@@ -391,12 +397,18 @@ const server = net.createServer((socket) => {
                         const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                         const tag = cipher.getAuthTag()
                         if (mode == "http") {
+                            const shit = Buffer.concat([iv, tag, encryptedMsg])
                             const req = https.request({
                                 hostname: config.hostname,
                                 port: 443,
-                                path: "/inform"
+                                path: `/inform`,
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/octet-stream',
+                                    'Content-Length': shit.length
+                                }
                             })
-                            req.write(Buffer.concat([iv, tag, encryptedMsg]))
+                            req.write(shit)
                             req.end()
                         } else if (conn)
                             await conn.lpush(`inform${config.prefix}`, Buffer.concat([iv, tag, encryptedMsg]))
@@ -488,7 +500,22 @@ const server = net.createServer((socket) => {
                                 const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
                                 const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                                 const tag = cipher.getAuthTag()
-                                if (conn) {
+                                if (mode == "http") {
+                                    const shit = Buffer.concat([iv, tag, encryptedMsg])
+                                    const req = https.request({
+                                        hostname: config.hostname,
+                                        port: 443,
+                                        path: `/${connectionID}&end`,
+                                        method: 'POST',
+                                        headers: {
+                                            'Content-Type': 'application/octet-stream',
+                                            'Content-Length': shit.length
+                                        }
+                                    })
+                                    req.write(shit)
+                                    req.end()
+                                }
+                                else if (conn) {
                                     conn.del(`ack,${connectionID}`)
                                     conn.del(`appserver,${connectionID}`)
                                     await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
@@ -549,6 +576,7 @@ const server = net.createServer((socket) => {
                                         const res = await fetch(`https://${config.hostname}/${connectionID}&${max.bandwidth}`)
                                         if (!res.ok) {
                                             logger("dns error")
+                                            logger(`${res.status}`)
                                             ctl.abort()
                                         }
                                         response = Buffer.from(await res.arrayBuffer())
@@ -697,6 +725,8 @@ process.on('uncaughtException', (error) => {
 const finishCallback = async () => {
     logger("Stopping the server", "info")
     server.close()
+    if (mode == "http")
+        return
     if (conn) {
         logger("Flushing all")
         await conn.flushdb()

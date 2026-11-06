@@ -7,7 +7,7 @@
   "type": "module",
   "main": "receiver.js",
   "scripts": {
-    "build": "tsc",
+    "build": "npx tsc",
     "dev": "node dist/receiver.js"
   },
   "dependencies": {
@@ -19,7 +19,8 @@
     "ioredis": "^5.10.1",
     "p-queue": "^9.3.3",
     "pg": "^8.20.0",
-    "redis": "^5.12.1"
+    "redis": "^5.12.1",
+    "typescript": "^7.0.2"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
