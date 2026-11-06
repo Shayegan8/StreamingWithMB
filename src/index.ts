@@ -139,7 +139,7 @@ if (mode == "s3")
 const bucketName = config.bucket
 
 let conn: Redis | null
-if (mode != 's3') {
+if (mode == "redis") {
     conn = new Redis(config.connstring, {
         maxRetriesPerRequest: null,
         keepAlive: 10000,
@@ -157,7 +157,7 @@ if (mode != 's3') {
 }
 
 let ack: Redis | null
-if (mode != 's3')
+if (mode == "redis")
     if (config.tls == "")
         ack = new Redis(config.connstring, {
             maxRetriesPerRequest: null,
@@ -170,7 +170,7 @@ if (mode != 's3')
             tls: { servername: config.tls }
         })
 
-if (mode != 's3' && config.pingAllT)
+if (mode == "redis" && config.pingAllT)
     try {
         await conn!.ping()
         await ack!.ping()
@@ -224,14 +224,14 @@ const popperBuffer = async (key: string, connectionID: string, abrt: AbortContro
     }
 }
 
-const bandwidthChange = (rtt: number, max: number, connectionID: string, response: Uint8Array<ArrayBufferLike>) => {
+const bandwidthChange = (rtt: number, max: { bandwidth: number }, connectionID: string, response: Uint8Array<ArrayBufferLike>) => {
     const meseaured = Date.now() - rtt
     if ((meseaured) > 4000) {
-        max -= (1024 * 100)
-        max = Math.max(max, 64 * 1024)
+        max.bandwidth -= (1024 * 100)
+        max.bandwidth = Math.max(max.bandwidth, 64 * 1024)
     } else {
-        max += (1024 * 100)
-        max = Math.max(100 * 1024, max)
+        max.bandwidth += (1024 * 100)
+        max.bandwidth = Math.max(100 * 1024, max.bandwidth)
     }
     logger(`RTT ${connectionID}:${String(Math.fround(meseaured / (1000))).slice(0, 5)}s for received packet with length of ${Math.fround(response.length / (1024 * 1024))}mb`, "info")
 }
@@ -293,7 +293,7 @@ const server = net.createServer((socket) => {
                         let buff: Buffer[] = []
                         let timejerk: NodeJS.Timeout
                         let rtt = 0
-                        let max = 512 * 1024
+                        let max = { bandwidth: 512 * 1024 }
                         let inSeq = "0"
                         let sent = false
                         let inatervo: NodeJS.Timeout | null
@@ -326,8 +326,8 @@ const server = net.createServer((socket) => {
                                     if (mode == "http") {
                                         const req = https.request({
                                             hostname: config.hostname,
-                                            port: 80,
-                                            path: `/${connectionID}&${512 * 1024}`
+                                            port: 443,
+                                            path: `/${connectionID}&${max.bandwidth}`
                                         })
                                         req.write(Buffer.concat([iv, tag, encryptedMsg]))
                                         req.end()
@@ -393,7 +393,7 @@ const server = net.createServer((socket) => {
                         if (mode == "http") {
                             const req = https.request({
                                 hostname: config.hostname,
-                                port: 80,
+                                port: 443,
                                 path: "/inform"
                             })
                             req.write(Buffer.concat([iv, tag, encryptedMsg]))
@@ -543,8 +543,15 @@ const server = net.createServer((socket) => {
                                     let response: ArrayBuffer | Uint8Array<ArrayBufferLike> | undefined
                                     if (blconn)
                                         response = (await blconn.brpopBuffer(`appserver,${connectionID}`, 0))?.[1]
-                                    else {
+                                    else if (mode == "s3")
                                         response = await popperBuffer(`appserver,${connectionID}/${outSeq}`, connectionID, ctl)
+                                    else { // https -> http
+                                        const res = await fetch(`https://${config.hostname}/${connectionID}&${max.bandwidth}`)
+                                        if (!res.ok) {
+                                            logger("dns error")
+                                            ctl.abort()
+                                        }
+                                        response = Buffer.from(await res.arrayBuffer())
                                     }
                                     if (!response) {
                                         logger(`server chunk for ${connectionID} is null`, "info")
@@ -558,7 +565,7 @@ const server = net.createServer((socket) => {
                                         if (mode == "s3") {
                                             toDelete.add(connectionID)
                                             ctl.abort()
-                                        } else {
+                                        } else if (mode == "redis") {
                                             const msg = Buffer.from('end', 'binary')
                                             const iv = crypto.randomBytes(12)
                                             const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
@@ -577,7 +584,7 @@ const server = net.createServer((socket) => {
                                     bandwidthChange(rtt, max, connectionID, response)
                                     if (mode == "s3")
                                         sclient.putObject(`proxy,ack,${connectionID}/${inSeq}`, Buffer.from(`${max}`))
-                                    else
+                                    else if (mode == "redis")
                                         s3g.send(new PutObjectCommand({
                                             Bucket: bucketName,
                                             Key: `proxy,ack,${connectionID}/${inSeq}`,

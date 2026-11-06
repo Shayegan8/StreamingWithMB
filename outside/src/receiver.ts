@@ -92,8 +92,7 @@ if (mode == "http") {
                         resp.end()
                         return
                     }
-                    sockets.get(connectionID)?.socket?.removeAllListeners()
-                    sockets.get(connectionID)?.socket?.end()
+                    sockets.get(connectionID)?.socket?.destroy()
                     sockets.delete(connectionID)
                 } else if (req.url == "/inform") {
                     const extractIv = bod.subarray(0, 12)
