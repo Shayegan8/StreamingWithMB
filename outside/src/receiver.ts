@@ -70,14 +70,18 @@ if (mode == "http") {
     const server = http.createServer((req, resp) => {
         req.on('data', async (bod: Buffer) => {
             try {
-                const extractIv = bod.subarray(0, 12)
-                const tag = bod.subarray(12, 28)
-                const encryptedChunk = bod.subarray(28)
-                const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
-                decipher.setAuthTag(tag)
-                const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
-                if (!Buffer.from('end', 'binary').compare(decryptedChunk.subarray(0, 3))) { // if it was end of stream willed by client
-                    const connectionID = req.url?.split('/')[1]
+                if (!req.url) {
+                    resp.writeHead(500)
+                    resp.end()
+                    return
+                }
+                if (req.url.length > 100) {
+                    resp.writeHead(500)
+                    resp.end()
+                    return
+                }
+                if (req.url?.includes("end")) { // if it was end of stream willed by client
+                    const connectionID = req.url?.split('/')[1]?.split('&')[0] // /uuid&end
                     if (!connectionID) {
                         resp.writeHead(500)
                         resp.end()
@@ -91,8 +95,14 @@ if (mode == "http") {
                     sockets.get(connectionID)?.socket?.removeAllListeners()
                     sockets.get(connectionID)?.socket?.end()
                     sockets.delete(connectionID)
-                } else if (!decryptedChunk.subarray(0, 6).compare(Buffer.from("inform"))) {
-                    const things = decryptedChunk.subarray(6).toString('utf8').split(',')!
+                } else if (req.url == "/inform") {
+                    const extractIv = bod.subarray(0, 12)
+                    const tag = bod.subarray(12, 28)
+                    const encryptedChunk = bod.subarray(28)
+                    const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
+                    decipher.setAuthTag(tag)
+                    const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
+                    const things = decryptedChunk.toString('utf8').split(',')!
                     const dstaddr = things[0]!
                     const dstport = parseInt(things[1]!)
                     const connectionID = things[2]!

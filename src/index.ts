@@ -293,8 +293,6 @@ const server = net.createServer((socket) => {
                         let buff: Buffer[] = []
                         let timejerk: NodeJS.Timeout
                         let rtt = 0
-
-
                         let max = 512 * 1024
                         let inSeq = "0"
                         let sent = false
@@ -310,7 +308,7 @@ const server = net.createServer((socket) => {
                                     logger(`Pushing batch to proxy,${connectionID}`, "info")
                                     let msg: Buffer<ArrayBuffer> | null
                                     let newVersion: Buffer
-                                    if (mode != "s3")
+                                    if (mode == "redis" || mode == "http")
                                         msg = Buffer.concat(buff)
                                     else {
                                         const concatious = Buffer.concat(buff)
@@ -325,7 +323,15 @@ const server = net.createServer((socket) => {
                                     const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
                                     const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                                     const tag = cipher.getAuthTag()
-                                    if (conn)
+                                    if (mode == "http") {
+                                        const req = https.request({
+                                            hostname: config.hostname,
+                                            port: 80,
+                                            path: `/${connectionID}&${512 * 1024}`
+                                        })
+                                        req.write(Buffer.concat([iv, tag, encryptedMsg]))
+                                        req.end()
+                                    } else if (conn)
                                         await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                     else {
                                         rtt = Date.now()
@@ -347,7 +353,7 @@ const server = net.createServer((socket) => {
                                     }
                                     buff = []
                                     sent = true
-                                    if (mode != "s3") {
+                                    if (mode == "redis") {
                                         const msgACK = Buffer.from(`${max}`, 'binary')
                                         const ivACK = crypto.randomBytes(12)
                                         const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
@@ -384,7 +390,15 @@ const server = net.createServer((socket) => {
                         const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
                         const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                         const tag = cipher.getAuthTag()
-                        if (conn)
+                        if (mode == "http") {
+                            const req = https.request({
+                                hostname: config.hostname,
+                                port: 80,
+                                path: "/inform"
+                            })
+                            req.write(Buffer.concat([iv, tag, encryptedMsg]))
+                            req.end()
+                        } else if (conn)
                             await conn.lpush(`inform${config.prefix}`, Buffer.concat([iv, tag, encryptedMsg]))
                         else {
                             const key = crypto.randomBytes(10).toString('hex')
@@ -403,7 +417,7 @@ const server = net.createServer((socket) => {
                                 })
                             }
                         }
-                        if (mode != "s3") {
+                        if (mode == "redis") {
                             inatervo = setInterval(async () => {
                                 if (!sent) {
                                     sent = true
@@ -421,7 +435,7 @@ const server = net.createServer((socket) => {
                         let blconn: Redis | null
 
                         const ctl = new AbortController()
-                        if (mode != "s3") {
+                        if (mode == "redis") {
                             blconn = new Redis(config.connstring, {
                                 maxRetriesPerRequest: null,
                                 keepAlive: 10000,
@@ -439,7 +453,7 @@ const server = net.createServer((socket) => {
                         }
 
                         let pinger: NodeJS.Timeout | null
-                        if (mode != "s3" && config.pingAllT)
+                        if (mode == "redis" && config.pingAllT)
                             pinger = setInterval(async () => {
                                 try {
                                     await blconn!.ping()
@@ -509,7 +523,7 @@ const server = net.createServer((socket) => {
                             })
                         })
 
-                        if (mode != "s3")
+                        if (mode == "redis")
                             blconn!.on('error', () => {
                                 logger("blconn error event: " + connectionID, "error")
                                 clearInterval(pinger!)
@@ -614,7 +628,7 @@ const server = net.createServer((socket) => {
                                     }
                                     socket?.write(decryptedChunk)
                                 } catch (error) {
-                                    if (mode != "s3") {
+                                    if (mode == "redis") {
                                         clearInterval(pinger!)
                                         const msg = Buffer.from('end', 'binary')
                                         const iv = crypto.randomBytes(12)
@@ -659,7 +673,7 @@ const server = net.createServer((socket) => {
     })
 })
 
-if (mode != "s3" && config.pingAllT)
+if (mode == "redis" && config.pingAllT)
     setInterval(async () => {
         try {
             await conn!.ping()
