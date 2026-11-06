@@ -67,7 +67,7 @@ if (mode == "http") {
         another is just request
         both are encrypted with aes256
     */
-    const server = http.createServer((req, resp) => {
+    const server = http.createServer(async (req, resp) => {
         try {
             if (!req.url) {
                 resp.writeHead(500)
@@ -181,6 +181,13 @@ if (mode == "http") {
                 let pqueue = new PQueue({ concurrency: 1 })
                 let length = 0
                 let finished = false
+                let reqBuff: Buffer[] = []
+                req.on('data', (data: Buffer) => {
+                    reqBuff.push(data)
+                })
+                req.on('end', () => {
+                    sockets.get(connectionID)!.socket!.write(Buffer.concat(reqBuff))
+                })
                 for await (const data of sockets.get(connectionID)!.socket!) {
                     logger("data arrived")
                     if (finished)

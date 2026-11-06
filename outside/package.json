@@ -8,7 +8,8 @@
   "main": "receiver.js",
   "scripts": {
     "build": "npx tsc",
-    "dev": "node dist/receiver.js"
+    "dev": "node dist/receiver.js",
+    "start": "node dist/receiver.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1137.0",
