@@ -408,8 +408,10 @@ const server = net.createServer((socket) => {
                                     'Content-Length': shit.length
                                 }
                             })
+                            logger("So i actually write the chunk")
                             req.write(shit)
                             req.end()
+                            logger("And done")
                         } else if (conn)
                             await conn.lpush(`inform${config.prefix}`, Buffer.concat([iv, tag, encryptedMsg]))
                         else {
@@ -580,6 +582,7 @@ const server = net.createServer((socket) => {
                                             ctl.abort()
                                         }
                                         response = Buffer.from(await res.arrayBuffer())
+                                        logger("The result: " + response.toString())
                                     }
                                     if (!response) {
                                         logger(`server chunk for ${connectionID} is null`, "info")

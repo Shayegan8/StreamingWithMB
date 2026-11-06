@@ -69,17 +69,21 @@ if (mode == "http") {
     */
     const server = http.createServer(async (req, resp) => {
         try {
+            logger(`URL: ${req.url}`)
             if (!req.url) {
+                logger("URL is required")
                 resp.writeHead(500)
                 resp.end()
                 return
             }
             if (req.url.length > 100) {
+                logger("URL is too long")
                 resp.writeHead(500)
                 resp.end()
                 return
             }
             if (req.url?.includes("end")) { // if it was end of stream willed by client
+                logger("URL contains end")
                 const connectionID = req.url?.split('/')[1]?.split('&')[0] // /uuid&end
                 if (!connectionID) {
                     resp.writeHead(500)
@@ -94,68 +98,78 @@ if (mode == "http") {
                 sockets.get(connectionID)?.socket?.destroy()
                 sockets.delete(connectionID)
             } else if (req.url == "/inform") {
+                logger("URL contains inform")
+                const informRequest: Buffer[] = []
                 req.on('data', async (bod: Buffer) => {
-                    const extractIv = bod.subarray(0, 12)
-                    const tag = bod.subarray(12, 28)
-                    const encryptedChunk = bod.subarray(28)
-                    const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
-                    decipher.setAuthTag(tag)
-                    const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
-                    const things = decryptedChunk.toString('utf8').split(',')!
-                    const dstaddr = things[0]!
-                    const dstport = parseInt(things[1]!)
-                    const connectionID = things[2]!
-                    const atyp = things[3]!
-                    if (!sockets.has(connectionID)) {
-                        let fastestWorkingIP: string | undefined
-                        if (atyp === "3")
-                            fastestWorkingIP = await getFastestIP(dstaddr, dstport)
-                        else
-                            fastestWorkingIP = dstaddr
-                        if (!fastestWorkingIP) {
-                            resp.writeHead(500)
-                            resp.end()
-                            sockets.delete(connectionID)
-                            return
-                        }
-                        const appServer = net.createConnection(dstport, fastestWorkingIP)
-                        appServer.on('end', async () => {
-                            const msg = Buffer.from('end', 'binary')
-                            const iv = crypto.randomBytes(12)
-                            const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
-                            const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
-                            const tag = cipher.getAuthTag()
-                            resp.writeHead(500)
-                            sockets.delete(connectionID)
-                            resp.end(Buffer.concat([iv, tag, encryptedMsg]))
-                        })
-
-                        sockets.set(connectionID, { socket: appServer, bandwidth: 512 * 1024 })
-                        const res = await new Promise<Boolean>((resolve) => {
-                            const connectionTimeout = setTimeout(() => {
-                                if (appServer)
-                                    appServer.destroy()
-                                resolve(false)
-                            }, 25000)
-                            appServer.once('connect', async () => {
-                                clearTimeout(connectionTimeout)
-                                resolve(true)
-                            })
-                            appServer.once('error', () => {
-                                clearTimeout(connectionTimeout)
-                                if (appServer)
-                                    appServer.destroy()
-                                resolve(false)
-                            })
-                        })
-                        if (!res) {
-                            resp.writeHead(500)
-                            resp.end()
-                            sockets.delete(connectionID)
-                            return
-                        }
-                    }
+                    informRequest.push(bod)
                 })
+                await new Promise((resolve, reject) => {
+                    req.on('end', async () => {
+                        resolve(reject)
+                    })
+                })
+                const bod = Buffer.concat(informRequest)
+                logger("We should get a data here")
+                const extractIv = bod.subarray(0, 12)
+                const tag = bod.subarray(12, 28)
+                const encryptedChunk = bod.subarray(28)
+                const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
+                decipher.setAuthTag(tag)
+                const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
+                const things = decryptedChunk.toString('utf8').split(',')!
+                const dstaddr = things[0]!
+                const dstport = parseInt(things[1]!)
+                const connectionID = things[2]!
+                const atyp = things[3]!
+                if (!sockets.has(connectionID)) {
+                    let fastestWorkingIP: string | undefined
+                    if (atyp === "3")
+                        fastestWorkingIP = await getFastestIP(dstaddr, dstport)
+                    else
+                        fastestWorkingIP = dstaddr
+                    if (!fastestWorkingIP) {
+                        resp.writeHead(500)
+                        resp.end()
+                        sockets.delete(connectionID)
+                        return
+                    }
+                    const appServer = net.createConnection(dstport, fastestWorkingIP)
+                    appServer.on('end', async () => {
+                        const msg = Buffer.from('end', 'binary')
+                        const iv = crypto.randomBytes(12)
+                        const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
+                        const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
+                        const tag = cipher.getAuthTag()
+                        resp.writeHead(500)
+                        sockets.delete(connectionID)
+                        resp.end(Buffer.concat([iv, tag, encryptedMsg]))
+                    })
+
+                    sockets.set(connectionID, { socket: appServer, bandwidth: 512 * 1024 })
+                    const res = await new Promise<Boolean>((resolve) => {
+                        const connectionTimeout = setTimeout(() => {
+                            if (appServer)
+                                appServer.destroy()
+                            resolve(false)
+                        }, 25000)
+                        appServer.once('connect', async () => {
+                            clearTimeout(connectionTimeout)
+                            resolve(true)
+                        })
+                        appServer.once('error', () => {
+                            clearTimeout(connectionTimeout)
+                            if (appServer)
+                                appServer.destroy()
+                            resolve(false)
+                        })
+                    })
+                    if (!res) {
+                        resp.writeHead(500)
+                        resp.end()
+                        sockets.delete(connectionID)
+                        return
+                    }
+                }
             } else { // real request, /uuid&bandwidth
                 const shits = req.url?.split('/')
                 if (!shits || !shits[1]) {
