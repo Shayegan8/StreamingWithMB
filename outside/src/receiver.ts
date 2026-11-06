@@ -77,47 +77,20 @@ if (mode == "http") {
                 decipher.setAuthTag(tag)
                 const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
                 if (!Buffer.from('end', 'binary').compare(decryptedChunk.subarray(0, 3))) { // if it was end of stream willed by client
-                    const encryptedConnectionID = Buffer.from(req.headers["cd"] as string)
-                    const extractIvv = encryptedConnectionID.subarray(0, 12)
-                    const tagg = encryptedConnectionID.subarray(12, 28)
-                    const encryptedChunkk = encryptedConnectionID.subarray(28)
-                    const decipherr = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIvv)
-                    decipherr.setAuthTag(tagg)
-                    const decryptedConnectionID = Buffer.concat([decipherr.update(encryptedChunkk), decipherr.final()])
-                    if (!sockets.has(decryptedConnectionID.toString('utf8'))) {
+                    const connectionID = req.url?.split('/')[1]
+                    if (!connectionID) {
                         resp.writeHead(500)
                         resp.end()
                         return
                     }
-                    sockets.get(decryptedConnectionID.toString('utf8'))?.socket?.removeAllListeners()
-                    sockets.get(decryptedConnectionID.toString('utf8'))?.socket?.end()
-                    sockets.delete(decryptedConnectionID.toString('utf8'))
-                } else if (!decryptedChunk.subarray(0, 3).compare(Buffer.from('ack'))) { // if the it was bandwidth request
-                    const encryptedConnectionID = Buffer.from(req.headers["cd"] as string)
-                    const extractIvv = encryptedConnectionID.subarray(0, 12)
-                    const tagg = encryptedConnectionID.subarray(12, 28)
-                    const encryptedChunkk = encryptedConnectionID.subarray(28)
-                    const decipherr = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIvv)
-                    decipherr.setAuthTag(tagg)
-                    const decryptedConnectionID = Buffer.concat([decipherr.update(encryptedChunkk), decipherr.final()])
-                    if (!sockets.has(decryptedConnectionID.toString('utf8'))) {
+                    if (!sockets.has(connectionID)) {
                         resp.writeHead(500)
                         resp.end()
                         return
                     }
-                    const encryptedBandwidth = Buffer.from(req.headers["bd"] as string)
-                    const extractIvvv = encryptedBandwidth.subarray(0, 12)
-                    const taggg = encryptedBandwidth.subarray(12, 28)
-                    const encryptedChunkkk = encryptedBandwidth.subarray(28)
-                    const decipherrr = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIvvv)
-                    decipherrr.setAuthTag(taggg)
-                    const decryptedBandwidth = Buffer.concat([decipherrr.update(encryptedChunkkk), decipherrr.final()])
-                    if (!sockets.has(decryptedBandwidth.toString('utf8'))) {
-                        resp.writeHead(500)
-                        resp.end()
-                        return
-                    }
-                    sockets.get(decryptedConnectionID.toString('utf8'))!.bandwidth = parseInt(decryptedBandwidth.toString('utf8'))
+                    sockets.get(connectionID)?.socket?.removeAllListeners()
+                    sockets.get(connectionID)?.socket?.end()
+                    sockets.delete(connectionID)
                 } else if (!decryptedChunk.subarray(0, 6).compare(Buffer.from("inform"))) {
                     const things = decryptedChunk.subarray(6).toString('utf8').split(',')!
                     const dstaddr = things[0]!
@@ -173,20 +146,22 @@ if (mode == "http") {
                             return
                         }
                     }
-                } else { // real request, well it can
-                    if (!req.headers["cd"]) {
+                } else { // real request, /uuid&bandwidth
+                    const shits = req.url?.split('/')
+                    if (!shits || !shits[1]) {
                         resp.writeHead(500)
                         resp.end()
                         return
                     }
-                    const encryptedConnectionID = Buffer.from(req.headers["cd"] as string)
-                    const extractIvv = encryptedConnectionID.subarray(0, 12)
-                    const tagg = encryptedConnectionID.subarray(12, 28)
-                    const encryptedChunkk = encryptedConnectionID.subarray(28)
-                    const decipherr = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIvv)
-                    decipherr.setAuthTag(tagg)
-                    const decryptedConnectionID = Buffer.concat([decipherr.update(encryptedChunkk), decipherr.final()])
-                    if (!sockets.has(decryptedConnectionID.toString('utf8'))) {
+                    const shitss = shits[1].split('&')
+                    const connectionID = shitss[0]
+                    const bandwidth = shitss[1]
+                    if (!connectionID || !bandwidth) {
+                        resp.writeHead(500)
+                        resp.end()
+                        return
+                    }
+                    if (!sockets.has(connectionID)) {
                         resp.writeHead(500)
                         resp.end()
                         return
@@ -196,7 +171,7 @@ if (mode == "http") {
                     let pqueue = new PQueue({ concurrency: 1 })
                     let length = 0
                     let finished = false
-                    for await (const data of sockets.get(decryptedConnectionID.toString('utf8'))!.socket!) {
+                    for await (const data of sockets.get(connectionID)!.socket!) {
                         logger("data arrived")
                         if (finished)
                             break
@@ -207,7 +182,7 @@ if (mode == "http") {
                             length += data.length
                             buffass.push(data)
                             pqueue.add(async () => {
-                                if (length > sockets.get(decryptedConnectionID.toString('utf8'))?.bandwidth!) { // bigger than 2mb
+                                if (length > sockets.get(connectionID)?.bandwidth!) { // bigger than 2mb
                                     let msg = Buffer.concat(buffass)
                                     const iv = crypto.randomBytes(12)
                                     const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
