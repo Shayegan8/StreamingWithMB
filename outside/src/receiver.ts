@@ -68,7 +68,8 @@ async function readBlocking(sock: net.Socket, timeoutMs: number, buffass: Buffer
     return new Promise<Buffer | null>((resolve) => {
         let settled = false
         const finish = (v: Buffer | null) => {
-            if (settled) return
+            if (settled)
+                return
             settled = true
             sock.off('readable', onReadable)
             sock.off('end', onEnd)
@@ -245,7 +246,14 @@ if (mode == "http") {
                 if (m == 'POST') { // r
                     logger("POST")
                     let reqBuff: Buffer[] = []
+                    let llength = 0
                     req.on('data', (data: Buffer) => {
+                        llength += data.length
+                        if (llength > (1024 * 1024 * 10)) {
+                            reqBuff = []
+                            req.removeAllListeners()
+                            return
+                        }
                         reqBuff.push(data)
                     })
                     req.on('end', () => {
@@ -273,9 +281,8 @@ if (mode == "http") {
                         // if the socket wasnt close and it was readable continue this process, the 25s timeout will reach
                         const data = await readBlocking(sockets.get(connectionID)?.socket!, 100, buffass, pqueue, length, finished)
                         if (data === null) {
-                            if (sockets.get(connectionID)?.socket?.destroyed) {
+                            if (sockets.get(connectionID)?.socket?.destroyed)
                                 finished.abort()
-                            }
                         } else {
                             // chunk contains EVERYTHING that arrived while you were waiting
                             // (bounded by highWaterMark, ~64 KB default)
