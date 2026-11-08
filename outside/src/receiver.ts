@@ -60,6 +60,51 @@ async function getFastestIP(address: string, port: number): Promise<string | und
     }
 }
 
+async function readBlocking(sock: net.Socket, timeoutMs: number, buffass: Buffer[], pqueue: PQueue, length: number, finished: AbortController): Promise<Buffer | null> {
+    const buffered: Buffer = sock.read()
+    if (buffered !== null)
+        return buffered
+
+    return new Promise<Buffer | null>((resolve) => {
+        let settled = false
+        const finish = (v: Buffer | null) => {
+            if (settled) return
+            settled = true
+            sock.off('readable', onReadable)
+            sock.off('end', onEnd)
+            sock.off('error', onError)
+            clearTimeout(timer)
+            resolve(v)
+        }
+
+        const onReadable = () => {
+            const c = sock.read()
+            if (c !== null) finish(c)
+        }
+        const onEnd = () => {
+            const c = sock.read()
+            finish(c)
+        }
+        const onError = () => finish(null)
+        const timer = setTimeout(async () => {
+            logger("Timeout has been reached")
+            if (!length) {
+                logger("Terminating for length's sake")
+                finish(null)
+                return
+            }
+            logger("Push the hell out of it")
+            pqueue.add(() => {
+                finished.abort()
+            })
+            finish(null)
+        }, timeoutMs)
+        sock.on('readable', onReadable)
+        sock.once('end', onEnd)
+        sock.once('error', onError)
+    })
+}
+
 if (mode == "http") {
     /*
         client sends 2 kind of data
@@ -223,85 +268,45 @@ if (mode == "http") {
                     let length = 0
                     let finished = new AbortController()
                     const pqueue = new PQueue({ concurrency: 1 })
-                    let data: Buffer
                     logger("I get there right?")
                     while (!finished.signal.aborted) {
                         // if the socket wasnt close and it was readable continue this process, the 25s timeout will reach
-                        if (!sockets.get(connectionID)?.socket?.readable && !sockets.get(connectionID)?.socket?.destroyed) {
-                            logger("Its readable and not closed?")
-                            if (timeout) {
-                                logger("Timeout clear first")
-                                clearTimeout(timeout)
+                        const data = await readBlocking(sockets.get(connectionID)?.socket!, 100, buffass, pqueue, length, finished)
+                        if (data === null) {
+                            if (sockets.get(connectionID)?.socket?.destroyed) {
+                                finished.abort()
                             }
-                            await new Promise<void>((resolve) => {
-                                setTimeout(resolve, 500)
-                            })
-                            continue
-                        } else if (sockets.get(connectionID)?.socket?.destroyed) {
-                            logger("Socket is closed i should abort")
-                            finished.abort()
                         } else {
-                            logger("Say if its readable or not " + sockets.get(connectionID)?.socket?.readable)
-                            logger("Say if its closed or not " + sockets.get(connectionID)?.socket?.destroyed)
+                            // chunk contains EVERYTHING that arrived while you were waiting
+                            // (bounded by highWaterMark, ~64 KB default)
+                            length += data.length
+                            logger("The length: " + length)
+                            buffass.push(data)
                         }
                         if (timeout) {
                             logger("Timeout clear")
                             clearTimeout(timeout)
                         }
-                        const bandwidth = sockets.get(connectionID)!.bandwidth!
+
+                        const bandwidth = sockets.get(connectionID)!.bandwidth! // well this causes error and who cares we write nothing on that moment also it means osckets get deleted so no memory leak
                         logger("Before cond clause")
-                        if (length < bandwidth) {
-                            logger("The length is smalelr than bandwidth")
-                            data = sockets.get(connectionID)?.socket?.read()
-                            if (null !== (data)) {
-                                length += data.length
-                                logger("The length: " + length)
-                                await new Promise((resolve) => setTimeout(resolve, 500))
-                                buffass.push(data)
-                            } else {
-                                logger("The length: " + length)
-                                await new Promise((resolve) => setTimeout(resolve, 500))
-                                continue
-                            }
-                        } else {
+                        if (length > bandwidth) {
                             logger("we should push right now")
                             pqueue.add(async () => {
-                                let msg = Buffer.concat(buffass)
-                                const iv = crypto.randomBytes(12)
-                                const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
-                                const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
-                                const tag = cipher.getAuthTag()
-                                resp.writeHead(202)
-                                resp.end(Buffer.concat([iv, tag, encryptedMsg]))
-                                buffass = []
-                                length = 0
                                 finished.abort()
                             })
                         }
-                        timeout = setTimeout(async () => {
-                            logger("Timeout has been reached")
-                            if (!length) {
-                                logger("Terminating for length's sake")
-                                return
-                            }
-                            logger("Push the hell out of it")
-                            pqueue.add(() => {
-                                let msg = Buffer.concat(buffass)
-                                const iv = crypto.randomBytes(12)
-                                const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
-                                const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
-                                const tag = cipher.getAuthTag()
-                                logger("Its because of there")
-                                resp.writeHead(202)
-                                resp.end(Buffer.concat([iv, tag, encryptedMsg]))
-                                buffass = []
-                                length = 0
-                                finished.abort()
-                            })
-                        }, 100)
+
                     }
                     // well if the socket was still open we let it be open?
                     logger("Here comes reall tunneling")
+                    let msg = Buffer.concat(buffass)
+                    const iv = crypto.randomBytes(12)
+                    const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
+                    const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
+                    const tag = cipher.getAuthTag()
+                    resp.writeHead(202)
+                    resp.end(Buffer.concat([iv, tag, encryptedMsg]))
                 }
             }
         } catch (e) {
