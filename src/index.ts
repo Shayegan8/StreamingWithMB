@@ -7,6 +7,7 @@ import config from "../config.json" with {type: 'json'}
 import { S3Client as S3Light } from '@bradenmacdonald/s3-lite-client'
 import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import https from 'https'
+import http from 'http'
 
 const mode = config.mode
 
@@ -226,6 +227,9 @@ const popperBuffer = async (key: string, connectionID: string, abrt: AbortContro
 
 const bandwidthChange = (rtt: number, max: { bandwidth: number }, connectionID: string, response: Uint8Array<ArrayBufferLike>) => {
     const meseaured = Date.now() - rtt
+    logger("rtt var: " + rtt)
+    logger("Now " + Date.now())
+    logger("Measured: " + (meseaured / 1000))
     if ((meseaured) > 4000) {
         max.bandwidth -= (1024 * 100)
         max.bandwidth = Math.max(max.bandwidth, 64 * 1024)
@@ -324,16 +328,20 @@ const server = net.createServer((socket) => {
                                     const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                                     const tag = cipher.getAuthTag()
                                     if (mode == "http") {
+                                        rtt = Date.now()
                                         const shit = Buffer.concat([iv, tag, encryptedMsg])
-                                        const req = https.request({
+                                        const req = http.request({
                                             hostname: config.hostname,
-                                            port: 443,
-                                            path: `/${connectionID}&${max.bandwidth}`,
+                                            port: 8000,
+                                            path: `/dc`,
                                             method: 'POST',
                                             headers: {
+                                                'cd': connectionID,
+                                                'bd': max.bandwidth,
                                                 'Content-Type': 'application/octet-stream',
                                                 'Content-Length': shit.length
-                                            }
+                                            },
+                                            timeout: 60000
                                         })
                                         req.write(shit)
                                         req.end()
@@ -398,19 +406,19 @@ const server = net.createServer((socket) => {
                         const tag = cipher.getAuthTag()
                         if (mode == "http") {
                             const shit = Buffer.concat([iv, tag, encryptedMsg])
-                            const req = https.request({
-                                hostname: config.hostname,
-                                port: 443,
-                                path: `/inform`,
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/octet-stream',
-                                    'Content-Length': shit.length
-                                }
+                            await new Promise<void>((resolve, reject) => {
+                                const req = http.request({
+                                    hostname: config.hostname, port: 8000,
+                                    path: `/inform`, method: 'POST',
+                                    headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': shit.length },
+                                }, (res) => {
+                                    res.on('data', () => { })
+                                    res.on('end', resolve)
+                                })
+                                req.on('error', reject)
+                                req.write(shit)
+                                req.end()
                             })
-                            logger("So i actually write the chunk")
-                            req.write(shit)
-                            req.end()
                             logger("And done")
                         } else if (conn)
                             await conn.lpush(`inform${config.prefix}`, Buffer.concat([iv, tag, encryptedMsg]))
@@ -495,6 +503,7 @@ const server = net.createServer((socket) => {
                         })
 
                         socket.on('end', async () => {
+                            ctl.abort()
                             await pqueue.add(async () => {
                                 logger(`Sending half close signal to proxy,${connectionID}`, "info")
                                 const msg = Buffer.from('end', 'binary')
@@ -504,20 +513,20 @@ const server = net.createServer((socket) => {
                                 const tag = cipher.getAuthTag()
                                 if (mode == "http") {
                                     const shit = Buffer.concat([iv, tag, encryptedMsg])
-                                    const req = https.request({
+                                    const req = http.request({
                                         hostname: config.hostname,
-                                        port: 443,
-                                        path: `/${connectionID}&end`,
+                                        port: 8000,
+                                        path: `/end`,
                                         method: 'POST',
                                         headers: {
+                                            'cd': connectionID,
                                             'Content-Type': 'application/octet-stream',
                                             'Content-Length': shit.length
                                         }
                                     })
                                     req.write(shit)
                                     req.end()
-                                }
-                                else if (conn) {
+                                } else if (conn) {
                                     conn.del(`ack,${connectionID}`)
                                     conn.del(`appserver,${connectionID}`)
                                     await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
@@ -565,6 +574,7 @@ const server = net.createServer((socket) => {
                                 socket.end()
                             })
 
+
                         let outSeq = "0"
                         const imedo = setImmediate(async () => {
                             while (!ctl.signal.aborted) {
@@ -575,16 +585,31 @@ const server = net.createServer((socket) => {
                                     else if (mode == "s3")
                                         response = await popperBuffer(`appserver,${connectionID}/${outSeq}`, connectionID, ctl)
                                     else { // https -> http
-                                        const res = await fetch(`https://${config.hostname}/${connectionID}&${max.bandwidth}`)
+                                        const res = await fetch(`http://${config.hostname}:8000/dc`, {
+                                            method: "GET",
+                                            headers: {
+                                                'cd': connectionID,
+                                                'bd': `${max.bandwidth}`,
+                                            }
+                                        })
+
                                         if (!res.ok) {
                                             logger("dns error")
                                             logger(`${res.status}`)
                                             ctl.abort()
                                         }
                                         response = Buffer.from(await res.arrayBuffer())
+                                        if (!response.length) {
+                                            await new Promise<void>((resolve) => {
+                                                setTimeout(resolve, 500)
+                                            })
+                                            continue
+                                        }
                                         logger("The result: " + response.toString())
                                     }
-                                    if (!response) {
+                                    logger("Toheljerk?: " + response?.length)
+                                    if (!response?.length) {
+                                        logger("SO THIS SHOULD BE WRITTEN")
                                         logger(`server chunk for ${connectionID} is null`, "info")
                                         if (pinger)
                                             clearInterval(pinger)
@@ -612,7 +637,9 @@ const server = net.createServer((socket) => {
                                         break
                                     }
                                     sent = false
+                                    logger("kair?")
                                     bandwidthChange(rtt, max, connectionID, response)
+                                    logger("Nakir?")
                                     if (mode == "s3")
                                         sclient.putObject(`proxy,ack,${connectionID}/${inSeq}`, Buffer.from(`${max}`))
                                     else if (mode == "redis")
@@ -624,6 +651,7 @@ const server = net.createServer((socket) => {
                                         })).catch((reason) => {
                                             logger(`Problem with pushing batch after informing ${reason}`, "error")
                                         })
+                                    logger("Kos?")
                                     const extractIv = response!.subarray(0, 12)
                                     const tag = response!.subarray(12, 28)
                                     const encryptedChunk = response!.subarray(28)
@@ -637,6 +665,7 @@ const server = net.createServer((socket) => {
                                         const realMsg = decryptedChunk.subarray(10)
                                         decryptedChunk = realMsg
                                     }
+                                    logger("kir?")
                                     if (!Buffer.from('end', 'binary').compare(decryptedChunk)) {
                                         logger(`server chunk for ${connectionID} is null`, "info")
                                         if (pinger)
@@ -664,8 +693,10 @@ const server = net.createServer((socket) => {
                                         socket.end()
                                         break
                                     }
+                                    logger("Writing shitass here?")
                                     socket?.write(decryptedChunk)
                                 } catch (error) {
+                                    logger("Error here because of shit of !response " + error)
                                     if (mode == "redis") {
                                         clearInterval(pinger!)
                                         const msg = Buffer.from('end', 'binary')
@@ -678,7 +709,7 @@ const server = net.createServer((socket) => {
                                             conn.del(`appserver,${connectionID}`)
                                             await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                         }
-                                    } else {
+                                    } else if (mode == "s3") {
                                         try {
                                             if (config.minimalClient) {
                                                 await sclient.putObject(`proxy,${connectionID}/${inSeq}`, Buffer.concat([iv, tag, encryptedMsg]))
@@ -693,6 +724,26 @@ const server = net.createServer((socket) => {
                                         } catch (e) {
                                             logger("Problem with s3g " + e, "error")
                                         }
+                                    } else {
+                                        const msg = Buffer.from('end', 'binary')
+                                        const iv = crypto.randomBytes(12)
+                                        const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
+                                        const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
+                                        const tag = cipher.getAuthTag()
+                                        const shit = Buffer.concat([iv, tag, encryptedMsg])
+                                        const req = http.request({
+                                            hostname: config.hostname,
+                                            port: 8000,
+                                            path: `/end`,
+                                            method: 'POST',
+                                            headers: {
+                                                'cd': connectionID,
+                                                'Content-Type': 'application/octet-stream',
+                                                'Content-Length': shit.length
+                                            }
+                                        })
+                                        req.write(shit)
+                                        req.end()
                                     }
                                     if (inatervo)
                                         clearInterval(inatervo)

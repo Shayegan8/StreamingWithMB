@@ -60,6 +60,51 @@ async function getFastestIP(address: string, port: number): Promise<string | und
     }
 }
 
+async function readBlocking(sock: net.Socket, timeoutMs: number, buffass: Buffer[], pqueue: PQueue, length: number, finished: AbortController): Promise<Buffer | null> {
+    // Fast path: something already buffered
+    const buffered: Buffer = sock.read()
+    if (buffered !== null) return buffered
+
+    return new Promise<Buffer | null>((resolve) => {
+        let settled = false
+        const finish = (v: Buffer | null) => {
+            if (settled) return
+            settled = true
+            sock.off('readable', onReadable)
+            sock.off('end', onEnd)
+            sock.off('error', onError)
+            clearTimeout(timer)
+            resolve(v)
+        }
+
+        const onReadable = () => {
+            const c = sock.read()
+            if (c !== null) finish(c)
+        }
+        const onEnd = () => {
+            const c = sock.read()
+            finish(c)
+        }
+        const onError = () => finish(null)
+        const timer = setTimeout(async () => {
+            logger("Timeout has been reached")
+            if (!length) {
+                logger("Terminating for length's sake")
+                finish(null)
+                return
+            }
+            logger("Push the hell out of it")
+            pqueue.add(() => {
+                finished.abort()
+            })
+            finish(null)
+        }, timeoutMs)
+        sock.on('readable', onReadable)
+        sock.once('end', onEnd)
+        sock.once('error', onError)
+    })
+}
+
 if (mode == "http") {
     /*
         client sends 2 kind of data
@@ -69,37 +114,38 @@ if (mode == "http") {
     */
     const server = http.createServer(async (req, resp) => {
         try {
-            logger(`URL: ${req.url}`)
-            if (!req.url) {
+            logger(`URL: ${req.url} METHOD ${req.method}`)
+            if (
+                !req.url) {
                 logger("URL is required")
-                resp.writeHead(500)
+                resp.writeHead(202)
                 resp.end()
                 return
             }
             if (req.url.length > 100) {
                 logger("URL is too long")
-                resp.writeHead(500)
+                resp.writeHead(202)
                 resp.end()
                 return
             }
-            if (req.url?.includes("end")) { // if it was end of stream willed by client
-                logger("URL contains end")
-                const connectionID = req.url?.split('/')[1]?.split('&')[0] // /uuid&end
+            if (req.url == "/end") { // if it was end of stream willed by client
+                logger("URL end")
+                const connectionID = req.headers["cd"] as string
                 if (!connectionID) {
-                    resp.writeHead(500)
+                    resp.writeHead(202)
                     resp.end()
                     return
                 }
                 if (!sockets.has(connectionID)) {
-                    resp.writeHead(500)
+                    resp.writeHead(202)
                     resp.end()
                     return
                 }
-                sockets.get(connectionID)?.socket?.destroy()
+                sockets.get(connectionID)?.socket?.end()
                 sockets.delete(connectionID)
-                resp.writeHead(203)
+                resp.writeHead(202)
                 resp.end()
-                return 
+                return
             } else if (req.url == "/inform") {
                 logger("URL contains inform")
                 const informRequest: Buffer[] = []
@@ -113,12 +159,14 @@ if (mode == "http") {
                 })
                 const bod = Buffer.concat(informRequest)
                 logger("We should get a data here")
+                logger("Data Encrypted:\n" + bod.toString("utf8"))
                 const extractIv = bod.subarray(0, 12)
                 const tag = bod.subarray(12, 28)
                 const encryptedChunk = bod.subarray(28)
                 const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
                 decipher.setAuthTag(tag)
                 const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
+                logger("Data Decrypted:\n" + decryptedChunk.toString('utf8'))
                 const things = decryptedChunk.toString('utf8').split(',')!
                 const dstaddr = things[0]!
                 const dstport = parseInt(things[1]!)
@@ -131,21 +179,19 @@ if (mode == "http") {
                     else
                         fastestWorkingIP = dstaddr
                     if (!fastestWorkingIP) {
-                        resp.writeHead(500)
-                        resp.end()
+                        const iv = crypto.randomBytes(12)
+                        const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
+                        const encryptedMsg = Buffer.concat([cipher.update(Buffer.from("end")), cipher.final()])
+                        const tag = cipher.getAuthTag()
+                        resp.writeHead(202)
+                        resp.end(Buffer.concat([iv, tag, encryptedMsg]))
                         sockets.delete(connectionID)
                         return
                     }
                     const appServer = net.createConnection(dstport, fastestWorkingIP)
                     appServer.on('end', async () => {
-                        const msg = Buffer.from('end', 'binary')
-                        const iv = crypto.randomBytes(12)
-                        const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
-                        const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
-                        const tag = cipher.getAuthTag()
-                        resp.writeHead(500)
+                        logger("This happened way before so we fuck ass bitch")
                         sockets.delete(connectionID)
-                        resp.end(Buffer.concat([iv, tag, encryptedMsg]))
                     })
 
                     sockets.set(connectionID, { socket: appServer, bandwidth: 512 * 1024 })
@@ -167,7 +213,7 @@ if (mode == "http") {
                         })
                     })
                     if (!res) {
-                        resp.writeHead(500)
+                        resp.writeHead(202)
                         resp.end()
                         sockets.delete(connectionID)
                         return
@@ -178,90 +224,99 @@ if (mode == "http") {
                     logger("I wrote for inform")
                     return
                 }
-            } else { // real request, /uuid&bandwidth
-                const shits = req.url?.split('/')
-                if (!shits || !shits[1]) {
-                    resp.writeHead(500)
-                    resp.end()
-                    return
-                }
-                const shitss = shits[1].split('&')
-                const connectionID = shitss[0]
-                const bandwidth = shitss[1]
+            } else if (req.url == "/dc") { // real request, /dc
+                logger("BUT I GET THERE RIGHT ???")
+                const m = req.method  // read or write?
+                const connectionID = req.headers["cd"] as string
+                const bandwidth = req.headers["bd"] as string
                 if (!connectionID || !bandwidth) {
-                    resp.writeHead(500)
+                    resp.writeHead(202)
                     resp.end()
                     return
                 }
                 if (!sockets.has(connectionID)) {
-                    resp.writeHead(500)
+                    resp.writeHead(203)
                     resp.end()
                     return
                 }
-                let buffass: Buffer[] = []
-                let timeout: NodeJS.Timeout
-                let pqueue = new PQueue({ concurrency: 1 })
-                let length = 0
-                let finished = false
-                let reqBuff: Buffer[] = []
-                req.on('data', (data: Buffer) => {
-                    reqBuff.push(data)
-                })
-                req.on('end', () => {
-                    sockets.get(connectionID)!.socket!.write(Buffer.concat(reqBuff))
-                })
-                for await (const data of sockets.get(connectionID)!.socket!) {
-                    logger("data arrived")
-                    if (finished)
-                        break
-                    pqueue.add(() => {
-                        logger("We are in the queue")
-                        if (timeout)
-                            clearTimeout(timeout)
-                        length += data.length
-                        buffass.push(data)
-                        pqueue.add(async () => {
-                            if (length > sockets.get(connectionID)?.bandwidth!) { // bigger than 2mb
-                                let msg = Buffer.concat(buffass)
-                                const iv = crypto.randomBytes(12)
-                                const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
-                                const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
-                                const tag = cipher.getAuthTag()
-                                resp.writeHead(200)
-                                resp.end(Buffer.concat([iv, tag, encryptedMsg]))
-                                buffass = []
-                                length = 0
-                                finished = true
-                            }
-                        })
-                        timeout = setTimeout(() => {
-                            if (!length)
-                                return
-                            pqueue.add(async () => {
-                                let msg = Buffer.concat(buffass)
-                                const iv = crypto.randomBytes(12)
-                                const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
-                                const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
-                                const tag = cipher.getAuthTag()
-                                logger("Its because of there")
-                                resp.writeHead(200)
-                                resp.end(Buffer.concat([iv, tag, encryptedMsg]))
-                                buffass = []
-                                length = 0
-                                finished = true
-                            })
-                        }, 100)
+                sockets.set(connectionID, { socket: sockets.get(connectionID)!.socket, bandwidth: parseInt(bandwidth) })
+
+                logger("The method is " + m)
+                if (m == 'POST') { // r
+                    logger("POST")
+                    let reqBuff: Buffer[] = []
+                    req.on('data', (data: Buffer) => {
+                        reqBuff.push(data)
                     })
+                    req.on('end', () => {
+                        const sag = Buffer.concat(reqBuff)
+                        const extractIv = sag.subarray(0, 12)
+                        const tag = sag.subarray(12, 28)
+                        const encryptedChunk = sag.subarray(28)
+                        const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
+                        decipher.setAuthTag(tag)
+                        let decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
+                        sockets.get(connectionID)!.socket!.write(decryptedChunk)
+                    })
+                    resp.writeHead(202)
+                    resp.end()
+                    return
+                } else if (m == 'GET') { // w
+                    logger("Shito")
+                    let buffass: Buffer[] = []
+                    let timeout: NodeJS.Timeout | null = null
+                    let length = 0
+                    let finished = new AbortController()
+                    const pqueue = new PQueue({ concurrency: 1 })
+                    logger("I get there right?")
+                    while (!finished.signal.aborted) {
+                        // if the socket wasnt close and it was readable continue this process, the 25s timeout will reach
+                        const data = await readBlocking(sockets.get(connectionID)?.socket!, 100, buffass, pqueue, length, finished)
+                        if (data === null) {
+                            if (sockets.get(connectionID)?.socket?.destroyed) {
+                                finished.abort()
+                            }
+                        } else {
+                            // chunk contains EVERYTHING that arrived while you were waiting
+                            // (bounded by highWaterMark, ~64 KB default)
+                            length += data.length
+                            logger("The length: " + length)
+                            buffass.push(data)
+                        }
+                        if (timeout) {
+                            logger("Timeout clear")
+                            clearTimeout(timeout)
+                        }
+                        const bandwidth = sockets.get(connectionID)!.bandwidth!
+                        logger("Before cond clause")
+                        if (length > bandwidth) {
+                            logger("we should push right now")
+                            pqueue.add(async () => {
+                                finished.abort()
+                            })
+                        }
+
+                    }
+                    // well if the socket was still open we let it be open?
+                    logger("Here comes reall tunneling")
+                    let msg = Buffer.concat(buffass)
+                    const iv = crypto.randomBytes(12)
+                    const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
+                    const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
+                    const tag = cipher.getAuthTag()
+                    resp.writeHead(202)
+                    resp.end(Buffer.concat([iv, tag, encryptedMsg]))
                 }
             }
         } catch (e) {
-            resp.writeHead(500)
+            logger("Fuck ass error " + e)
+            resp.writeHead(202)
             resp.end()
             req.removeAllListeners()
         }
     })
-    server.listen(80, "0.0.0.0", () => {
-        logger("Listening on 80", "info")
+    server.listen(8000, "0.0.0.0", () => {
+        logger("Listening on 8000", "info")
     })
 } else {
     const sclient = new S3Light({

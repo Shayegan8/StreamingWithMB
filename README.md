@@ -67,7 +67,12 @@ what i choose unix sockets with api for production (just need to be sockets with
 because the code base becomes scalable and can be used for both personal use and production use, this is just a roadmap for who willing to benefit from this which i dont support them
 and i should be the guy who benefits everything, so why i share my fucking cool tools? because im idiot
 
-OK FINE I MAKE THIS FUCKING LAYER
+OK FINE I MAKE THIS FUCKING LAYER (built it but not completed yet)
+Well you might (none) wonder why i change the bandwidth with client not server side
+well lets say we do it reverse just like usual, well server sends the chunks it reads and client sends ack after that, in this period we consider it as RTT, well meanwhile we are
+listening for ack, we are also listening for bandwidth so we still read with old bandwidth
+in our scenario, we say client says what bandwidth it wants, you see? both have same process of getting something, my scenario gets bandwidth number and connectionID from client
+in usual way it just gets ack from client, both have approximately same RTT, so it dosen't matter what scenario we use
 
 # On mobile
 Well I use typescript 5.7 version in termux with **SocksTun** and it works well
