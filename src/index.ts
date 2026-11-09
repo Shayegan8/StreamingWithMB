@@ -248,6 +248,7 @@ This means we its completed or maybe more than that but it got overflow, but thi
 have 7digit when converted to byte
 */
 const server = net.createServer((socket) => {
+    let httpAborter: AbortController | null = null
     socket.on('error', (err) => {
         logger(`Client error: ${err.message}`, "error")
     })
@@ -323,28 +324,52 @@ const server = net.createServer((socket) => {
                                         concatious.copy(preMsg, 10, 0)
                                         msg = preMsg
                                     }
+                                    logger("Before bitch 1")
+
                                     const iv = crypto.randomBytes(12)
                                     const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
                                     const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                                     const tag = cipher.getAuthTag()
+                                    logger("Before bitch")
                                     if (mode == "http") {
+                                        if (!httpAborter)
+                                            httpAborter = new AbortController()
                                         rtt = Date.now()
                                         const shit = Buffer.concat([iv, tag, encryptedMsg])
-                                        const req = http.request({
-                                            hostname: config.hostname,
-                                            port: 8000,
-                                            path: `/dc`,
-                                            method: 'POST',
-                                            headers: {
-                                                'cd': connectionID,
-                                                'bd': max.bandwidth,
-                                                'Content-Type': 'application/octet-stream',
-                                                'Content-Length': shit.length
-                                            },
-                                            timeout: 60000
-                                        })
-                                        req.write(shit)
-                                        req.end()
+                                        while (!httpAborter.signal.aborted) {
+                                            logger("This loop got reached")
+                                            const code = await new Promise<number>((resolve) => {
+                                                const req = http.request({
+                                                    hostname: config.hostname,
+                                                    port: 8000,
+                                                    path: `/dc`,
+                                                    method: 'POST',
+                                                    headers: {
+                                                        'cd': connectionID,
+                                                        'bd': max.bandwidth,
+                                                        'Content-Type': 'application/octet-stream',
+                                                        'Content-Length': shit.length
+                                                    },
+                                                }, (resp) => {
+                                                    resp.on('data', () => { })
+                                                    resp.on('end', () => {
+                                                        resolve(resp.statusCode!)
+                                                    })
+                                                })
+                                                req.write(shit)
+                                                req.end()
+                                            })
+                                            logger("After it")
+                                            if (code == 203) {
+                                                logger("203 code")
+                                                await new Promise<void>((resolve) => setTimeout(resolve, 100))
+                                                continue
+                                            } else {
+                                                logger("The code " + code)
+                                                break
+                                            }
+
+                                        }
                                     } else if (conn)
                                         await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                     else {
@@ -405,6 +430,7 @@ const server = net.createServer((socket) => {
                         const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                         const tag = cipher.getAuthTag()
                         if (mode == "http") {
+                            logger("Before al bachein")
                             const shit = Buffer.concat([iv, tag, encryptedMsg])
                             await new Promise<void>((resolve, reject) => {
                                 const req = http.request({
@@ -412,7 +438,7 @@ const server = net.createServer((socket) => {
                                     path: `/inform`, method: 'POST',
                                     headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': shit.length },
                                 }, (res) => {
-                                    res.on('data', () => { })
+                                    res.on("data", () => { })
                                     res.on('end', resolve)
                                 })
                                 req.on('error', reject)
@@ -512,6 +538,7 @@ const server = net.createServer((socket) => {
                                 const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                                 const tag = cipher.getAuthTag()
                                 if (mode == "http") {
+                                    httpAborter?.abort()
                                     const shit = Buffer.concat([iv, tag, encryptedMsg])
                                     const req = http.request({
                                         hostname: config.hostname,
@@ -605,7 +632,6 @@ const server = net.createServer((socket) => {
                                             })
                                             continue
                                         }
-                                        logger("The result: " + response.toString())
                                     }
                                     logger("Toheljerk?: " + response?.length)
                                     if (!response?.length) {

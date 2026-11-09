@@ -87,6 +87,11 @@ async function readBlocking(sock: net.Socket, timeoutMs: number, buffass: Buffer
             finish(c)
         }
         const onError = () => finish(null)
+        /*
+            The bug is like this
+            client sends client hello after inform
+            but in this period somehow there is no buff
+        */
         const timer = setTimeout(async () => {
             logger("Timeout has been reached")
             if (!length) {
@@ -113,6 +118,7 @@ if (mode == "http") {
         another is just request
         both are encrypted with aes256
     */
+    const serverQ = new PQueue({ concurrency: 1 })
     const server = http.createServer(async (req, resp) => {
         try {
             logger(`URL: ${req.url} METHOD ${req.method}`)
@@ -142,8 +148,10 @@ if (mode == "http") {
                     resp.end()
                     return
                 }
-                sockets.get(connectionID)?.socket?.end()
-                sockets.delete(connectionID)
+                serverQ.add(() => {
+                    sockets.get(connectionID)?.socket?.end()
+                    sockets.delete(connectionID)
+                })
                 resp.writeHead(202)
                 resp.end()
                 return
@@ -173,7 +181,12 @@ if (mode == "http") {
                 const dstport = parseInt(things[1]!)
                 const connectionID = things[2]!
                 const atyp = things[3]!
-                if (!sockets.has(connectionID)) {
+                const yesOrNot = await new Promise<boolean>((resolve) => {
+                    serverQ.add(() => {
+                        resolve(sockets.has(connectionID))
+                    })
+                })
+                if (!yesOrNot) {
                     let fastestWorkingIP: string | undefined
                     if (atyp === "3")
                         fastestWorkingIP = await getFastestIP(dstaddr, dstport)
@@ -186,16 +199,22 @@ if (mode == "http") {
                         const tag = cipher.getAuthTag()
                         resp.writeHead(202)
                         resp.end(Buffer.concat([iv, tag, encryptedMsg]))
-                        sockets.delete(connectionID)
+                        serverQ.add(() => {
+                            sockets.delete(connectionID)
+                        })
                         return
                     }
                     const appServer = net.createConnection(dstport, fastestWorkingIP)
                     appServer.on('end', async () => {
                         logger("This happened way before so we fuck ass bitch")
-                        sockets.delete(connectionID)
+                        serverQ.add(() => {
+                            sockets.delete(connectionID)
+                        })
                     })
 
-                    sockets.set(connectionID, { socket: appServer, bandwidth: 512 * 1024 })
+                    serverQ.add(() => {
+                        sockets.set(connectionID, { socket: appServer, bandwidth: 512 * 1024 })
+                    })
                     const res = await new Promise<Boolean>((resolve) => {
                         const connectionTimeout = setTimeout(() => {
                             if (appServer)
@@ -216,7 +235,9 @@ if (mode == "http") {
                     if (!res) {
                         resp.writeHead(202)
                         resp.end()
-                        sockets.delete(connectionID)
+                        serverQ.add(() => {
+                            sockets.delete(connectionID)
+                        })
                         return
                     }
 
@@ -235,12 +256,21 @@ if (mode == "http") {
                     resp.end()
                     return
                 }
-                if (!sockets.has(connectionID)) {
+                const yesOrNot = await new Promise<boolean>((resolve) => {
+                    serverQ.add(() => {
+                        resolve(sockets.has(connectionID))
+                    })
+                })
+                
+                if (!yesOrNot) {
+                    logger("I write")
                     resp.writeHead(203)
                     resp.end()
                     return
                 }
-                sockets.set(connectionID, { socket: sockets.get(connectionID)!.socket, bandwidth: parseInt(bandwidth) })
+                serverQ.add(() => {
+                    sockets.set(connectionID, { socket: sockets.get(connectionID)!.socket, bandwidth: parseInt(bandwidth) })
+                })
 
                 logger("The method is " + m)
                 if (m == 'POST') { // r
@@ -264,7 +294,9 @@ if (mode == "http") {
                         const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
                         decipher.setAuthTag(tag)
                         let decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
-                        sockets.get(connectionID)!.socket!.write(decryptedChunk)
+                        serverQ.add(() => {
+                            sockets.get(connectionID)!.socket!.write(decryptedChunk)
+                        })
                     })
                     resp.writeHead(202)
                     resp.end()
@@ -279,9 +311,25 @@ if (mode == "http") {
                     logger("I get there right?")
                     while (!finished.signal.aborted) {
                         // if the socket wasnt close and it was readable continue this process, the 25s timeout will reach
-                        const data = await readBlocking(sockets.get(connectionID)?.socket!, 100, buffass, pqueue, length, finished)
+                        /*
+                            There is no buffer when what? of course there is buffer when client connection and request are in and consumed
+
+                        */
+                        const sock = await new Promise<{
+                            socket: net.Socket | undefined
+                            bandwidth?: number
+                        } | null>((resolve) => {
+                            serverQ.add(() => {
+                                try {
+                                    resolve(sockets.get(connectionID)!)
+                                } catch (e) {
+                                    resolve(null)
+                                }
+                            })
+                        })
+                        const data = await readBlocking(sock?.socket!, 100, buffass, pqueue, length, finished)
                         if (data === null) {
-                            if (sockets.get(connectionID)?.socket?.destroyed)
+                            if (sock?.socket?.destroyed)
                                 finished.abort()
                         } else {
                             // chunk contains EVERYTHING that arrived while you were waiting
@@ -295,8 +343,7 @@ if (mode == "http") {
                             clearTimeout(timeout)
                         }
 
-                        const bandwidth = sockets.get(connectionID)!.bandwidth! // well this causes error and who cares we write nothing on that moment also it means osckets get deleted so no memory leak
-                        logger("Before cond clause")
+                        const bandwidth = sock!.bandwidth!
                         if (length > bandwidth) {
                             logger("we should push right now")
                             pqueue.add(async () => {
