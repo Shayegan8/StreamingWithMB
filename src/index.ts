@@ -355,11 +355,15 @@ const server = net.createServer((socket) => {
                                                     resp.on('end', () => {
                                                         resolve(resp.statusCode!)
                                                     })
+                                                    resp.on('error', () => {
+                                                        resolve(0)
+                                                    })
                                                 })
                                                 req.write(shit)
                                                 req.end()
                                             })
                                             logger("After it")
+                                        
                                             if (code == 203) {
                                                 logger("203 code")
                                                 await new Promise<void>((resolve) => setTimeout(resolve, 100))
