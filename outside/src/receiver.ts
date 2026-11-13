@@ -118,8 +118,8 @@ if (mode == "http") {
         another is just request
         both are encrypted with aes256
     */
-    const serverQ = new PQueue({ concurrency: 1 })
     const server = http.createServer(async (req, resp) => {
+        const serverQ = new PQueue({ concurrency: 1 })
         try {
             logger(`URL: ${req.url} METHOD ${req.method}`)
             if (
@@ -261,7 +261,7 @@ if (mode == "http") {
                         resolve(sockets.has(connectionID))
                     })
                 })
-                
+
                 if (!yesOrNot) {
                     logger("I write")
                     resp.writeHead(203)
