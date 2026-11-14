@@ -685,7 +685,7 @@ if (mode == "http") {
                 let outSeq = "0"
                 const aborti = new AbortController()
                 while (mode == "s3" ? !(aborti.signal.aborted) : true) {
-                    let request: Uint8Array<ArrayBufferLike> | undefined
+                    let request: Buffer | undefined
                     if (mode != "s3") {
                         request = (await blconn1!.brpopBuffer(`proxy,${connectionID}`, 0))?.[1]
                     } else {
@@ -728,15 +728,15 @@ if (mode == "http") {
                             await blconn1!.del(`proxy,${connectionID}`)
                             blconn1!.quit().catch(() => { })
                             ackconn!.quit().catch(() => { })
-                            toDelete.add(connectionID)
                             break
                         }
                     }
-                    let realMsg: Uint8Array<ArrayBufferLike>
+
+                    let realMsg: Buffer
                     if (mode == "s3") {
                         logger("Ok this is")
                         const newVersion = request.subarray(0, 10)
-                        inSeq = newVersion.toHex()
+                        inSeq = newVersion.toString('hex')
                         realMsg = request.subarray(10)
                     }
 

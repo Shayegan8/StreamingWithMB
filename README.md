@@ -85,3 +85,6 @@ QA:
 - Do you use this repository for your daily?: Yes all the day and i have good **infrastructure** which all of them are really really cheap
 
 MAYBE i add a mechanism that you can use both s3 and redis, like sending your chunks with redis database and getting them with s3 and backwards, maybe i add udp ip spoof tunneling
+
+TODO:
+- Add a stacked logic for deletion which just write something in like uuid,DEAD DEAD shows this uuid dosent exist anymore so delete all that relates to it And after that delete the uuidDEAD too
