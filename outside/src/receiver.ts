@@ -261,7 +261,7 @@ if (mode == "http") {
                         resolve(sockets.has(connectionID))
                     })
                 })
-                
+
                 if (!yesOrNot) {
                     logger("I write")
                     resp.writeHead(203)
@@ -598,7 +598,7 @@ if (mode == "http") {
                 }
                 logger(`It took me ${Date.now() - dangoz}ms to actually receive this`)
                 logger("Fucked?")
-                return bod
+                return decryptedChunk
             } catch (e) {
                 await new Promise(r => setTimeout(r, delay))
                 delay = Math.min(delay * 2, 500)
@@ -616,8 +616,8 @@ if (mode == "http") {
             logger("Subarjerk after")
             const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
             decipher.setAuthTag(tag)
-            const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
-            const things = decryptedChunk.toString('utf8').split(',')!
+            const decryptedChunk1 = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
+            const things = decryptedChunk1.toString('utf8').split(',')!
             const dstaddr = things[0]!
             const dstport = parseInt(things[1]!)
             const connectionID = things[2]!
@@ -711,34 +711,33 @@ if (mode == "http") {
                         break
                     }
                     logger("After match, the version being used " + inSeq)
-                    const extractIv = request!.subarray(0, 12)
-                    const tag = request!.subarray(12, 28)
-                    const encryptedChunk = request!.subarray(28)
-                    const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
-                    decipher.setAuthTag(tag)
-                    const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
-                    logger("The version now we want after " + inSeq)
-                    if (!Buffer.from('end', 'binary').compare(decryptedChunk)) {
-                        logger("Freeing memory from client")
-                        sockets.get(connectionID)?.socket?.end()
-                        sockets.delete(connectionID)
-                        aborti.abort()
-                        if (mode != "s3") {
+                    if (mode == "redis") {
+                        const extractIv = request!.subarray(0, 12)
+                        const tag = request!.subarray(12, 28)
+                        const encryptedChunk = request!.subarray(28)
+                        const decipher = crypto.createDecipheriv("aes-256-gcm", symmetricKey, extractIv)
+                        decipher.setAuthTag(tag)
+                        const decryptedChunk = Buffer.concat([decipher.update(encryptedChunk), decipher.final()])
+                        logger("The version now we want after " + inSeq)
+                        if (!Buffer.from('end', 'binary').compare(decryptedChunk)) {
+                            logger("Freeing memory from client")
+                            sockets.get(connectionID)?.socket?.end()
+                            sockets.delete(connectionID)
+                            aborti.abort()
                             clearInterval(pinger!)
                             await blconn1!.del(`proxy,${connectionID}`)
                             blconn1!.quit().catch(() => { })
                             ackconn!.quit().catch(() => { })
-                        } else {
                             toDelete.add(connectionID)
+                            break
                         }
-                        break
                     }
-                    let realMsg: Buffer<ArrayBuffer>
+                    let realMsg: Uint8Array<ArrayBufferLike>
                     if (mode == "s3") {
                         logger("Ok this is")
-                        const newVersion = decryptedChunk.subarray(0, 10)
-                        inSeq = newVersion.toString('hex')
-                        realMsg = decryptedChunk.subarray(10)
+                        const newVersion = request.subarray(0, 10)
+                        inSeq = newVersion.toHex()
+                        realMsg = request.subarray(10)
                     }
 
                     let buffered: Uint8Array<ArrayBufferLike> | undefined
@@ -854,7 +853,7 @@ if (mode == "http") {
                             break
                         }
 
-                        sockets.get(connectionID)?.socket?.write(mode == "s3" ? realMsg! : decryptedChunk)
+                        sockets.get(connectionID)?.socket?.write(mode == "s3" ? realMsg! : request)
                         let buffass: Buffer[] = []
                         let timeout: NodeJS.Timeout
                         let pqueue = new PQueue({ concurrency: 1 })
@@ -962,7 +961,7 @@ if (mode == "http") {
                         })
                         // notify the proxy appserver dont sends data anymore (half close)
                     } else
-                        sockets.get(connectionID)?.socket?.write(mode == "s3" ? realMsg! : decryptedChunk)
+                        sockets.get(connectionID)?.socket?.write(mode == "s3" ? realMsg! : request)
                 }
             } catch (e) {
             }
