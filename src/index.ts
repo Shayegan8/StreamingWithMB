@@ -178,7 +178,7 @@ if (mode == "redis" && config.pingAllT)
 
 
 function logger(param: string, type?: string) {
-    if(!config.logger)
+    if (!config.logger)
         return
     const date = new Date(Date.now())
     console.log(type == "info" ? `[\x1b[33mINFO\x1b[0m] [\x1b[32m${mode}\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}`
@@ -223,8 +223,9 @@ const popperBuffer = async (key: string, connectionID: string, abrt: AbortContro
     }
 }
 
-const bandwidthChange = (rtt: number, max: { bandwidth: number }, connectionID: string, dstaddr: string, dstport: string, response: Uint8Array<ArrayBufferLike>) => {
-    const meseaured = Date.now() - rtt
+const bandwidthChange = (rtt: { rtt: number }, rttQueue: PQueue, max: { bandwidth: number }, connectionID: string, dstaddr: string, dstport: string, response: Uint8Array<ArrayBufferLike>) => {
+    const meseaured = Date.now() - rtt.rtt
+    rttQueue.add(() => rtt.rtt = Date.now())
     if ((meseaured) > 4000) {
         max.bandwidth -= (1024 * 100)
         max.bandwidth = Math.max(max.bandwidth, 64 * 1024)
@@ -292,7 +293,8 @@ const server = net.createServer((socket) => {
                         let pqueue = new PQueue({ concurrency: 1 })
                         let buff: Buffer[] = []
                         let timejerk: NodeJS.Timeout
-                        let rtt = 0
+                        let rttObject = { rtt: 0 }
+                        const rttQueue = new PQueue({ concurrency: 1 })
                         let max = { bandwidth: 512 * 1024 }
                         let inSeq = "0"
                         let sent = false
@@ -326,7 +328,7 @@ const server = net.createServer((socket) => {
                                     if (mode == "http") {
                                         if (!httpAborter)
                                             httpAborter = new AbortController()
-                                        rtt = Date.now()
+                                        rttQueue.add(() => rttObject.rtt = Date.now())
                                         const shit = Buffer.concat([iv, tag, encryptedMsg])
                                         while (!httpAborter.signal.aborted) {
                                             const code = await new Promise<number>((resolve) => {
@@ -353,7 +355,7 @@ const server = net.createServer((socket) => {
                                                 req.write(shit)
                                                 req.end()
                                             })
-                                        
+
                                             if (code == 203) {
                                                 await new Promise<void>((resolve) => setTimeout(resolve, 100))
                                                 continue
@@ -365,7 +367,7 @@ const server = net.createServer((socket) => {
                                     } else if (conn)
                                         await conn.lpush(`proxy,${connectionID}`, Buffer.concat([iv, tag, encryptedMsg]))
                                     else {
-                                        rtt = Date.now()
+                                        rttQueue.add(() => rttObject.rtt = Date.now())
                                         if (config.minimalClient)
                                             await sclient.putObject(`proxy,${connectionID}/${inSeq}`, Buffer.concat([iv, tag, encryptedMsg])).catch((reason) => {
                                                 logger(`Problem with pushing batch after informing ${reason}`, "error")
@@ -379,7 +381,7 @@ const server = net.createServer((socket) => {
                                             })).catch((reason) => {
                                                 logger(`Problem with pushing batch after informing ${reason}`, "error")
                                             })
-                                        logger(`It took ${Date.now() - rtt}ms for pushing batch`, "info")
+                                        logger(`It took ${Date.now() - rttObject.rtt}ms for pushing batch`, "info")
                                         inSeq = newVersion!.toString('hex')
                                     }
                                     buff = []
@@ -391,7 +393,7 @@ const server = net.createServer((socket) => {
                                         const encryptedMsgACK = Buffer.concat([cipherACK.update(msgACK), cipherACK.final()])
                                         const tagACK = cipherACK.getAuthTag()
                                         if (conn) {
-                                            rtt = Date.now()
+                                            rttQueue.add(() => rttObject.rtt = Date.now())
                                             await conn.lpush(`ack,${connectionID}`, Buffer.concat([ivACK, tagACK, encryptedMsgACK]))
                                         }
                                     }
@@ -461,7 +463,8 @@ const server = net.createServer((socket) => {
                             inatervo = setInterval(async () => {
                                 if (!sent) {
                                     sent = true
-                                    rtt = Date.now()
+
+                                    rttQueue.add(() => rttObject.rtt = Date.now())
                                     const msgACK = Buffer.from(`${max}`, 'binary')
                                     const ivACK = crypto.randomBytes(12)
                                     const cipherACK = crypto.createCipheriv("aes-256-gcm", symmetricKey, ivACK)
@@ -625,7 +628,6 @@ const server = net.createServer((socket) => {
                                             continue
                                         }
                                     }
-                                    logger("Toheljerk?: " + response?.length)
                                     if (!response?.length) {
                                         logger("SO THIS SHOULD BE WRITTEN")
                                         logger(`server chunk for ${connectionID} is null`, "info")
@@ -655,7 +657,7 @@ const server = net.createServer((socket) => {
                                         break
                                     }
                                     sent = false
-                                    bandwidthChange(rtt, max, connectionID, DSTADDR, `${DSTPORT}`, response)
+                                    bandwidthChange(rttObject, rttQueue, max, connectionID, DSTADDR, `${DSTPORT}`, response)
                                     if (mode == "s3")
                                         sclient.putObject(`proxy,ack,${connectionID}/${inSeq}`, Buffer.from(`${max}`))
                                     else if (mode == "redis")
