@@ -110,7 +110,6 @@ if (mode == "s3")
                                             }))
                                         }))
                                     } catch (e) {
-                                        logger("Ok this failed too? why?")
                                         logger(e as any)
                                     }
                                 }
@@ -123,7 +122,6 @@ if (mode == "s3")
                                         }))
                                     }))
                                 } catch (e) {
-                                    logger("Ok this failed too? why?")
                                     logger(e as any)
                                 }
                             }
@@ -147,7 +145,6 @@ if (mode == "redis") {
         tls: config.tls == "" ? {} : { servername: config.tls }
     })
     conn!.on('end', () => {
-        logger("Lemme see thi happens or not conn")
         conn!.disconnect()
         conn = new Redis(config.connstring, {
             maxRetriesPerRequest: null,
@@ -181,6 +178,8 @@ if (mode == "redis" && config.pingAllT)
 
 
 function logger(param: string, type?: string) {
+    if(!config.logger)
+        return
     const date = new Date(Date.now())
     console.log(type == "info" ? `[\x1b[33mINFO\x1b[0m] [\x1b[32m${mode}\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}`
         : (type == "error" ? `[\x1b[31mERR\x1b[0m] [\x1b[32m${mode}\x1b[0m] ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()} ${param}` : param))
@@ -204,7 +203,6 @@ const popperBuffer = async (key: string, connectionID: string, abrt: AbortContro
                 const data = await s3g.send(new GetObjectCommand({ Bucket: bucketName, Key: key }))
                 bod = await data.Body!.transformToByteArray()
             }
-            logger(`Batch received for ${key}`, "info")
             const extractIv = bod.subarray(0, 12)
             const tag = bod.subarray(12, 28)
             const encryptedChunk = bod.subarray(28)
@@ -225,11 +223,8 @@ const popperBuffer = async (key: string, connectionID: string, abrt: AbortContro
     }
 }
 
-const bandwidthChange = (rtt: number, max: { bandwidth: number }, connectionID: string, response: Uint8Array<ArrayBufferLike>) => {
+const bandwidthChange = (rtt: number, max: { bandwidth: number }, connectionID: string, dstaddr: string, dstport: string, response: Uint8Array<ArrayBufferLike>) => {
     const meseaured = Date.now() - rtt
-    logger("rtt var: " + rtt)
-    logger("Now " + Date.now())
-    logger("Measured: " + (meseaured / 1000))
     if ((meseaured) > 4000) {
         max.bandwidth -= (1024 * 100)
         max.bandwidth = Math.max(max.bandwidth, 64 * 1024)
@@ -237,7 +232,7 @@ const bandwidthChange = (rtt: number, max: { bandwidth: number }, connectionID: 
         max.bandwidth += (1024 * 100)
         max.bandwidth = Math.max(100 * 1024, max.bandwidth)
     }
-    logger(`RTT ${connectionID}:${String(Math.fround(meseaured / (1000))).slice(0, 5)}s for received packet with length of ${Math.fround(response.length / (1024 * 1024))}mb`, "info")
+    logger(`RTT ${connectionID}-${dstaddr}:${dstport} = ${String(Math.fround(meseaured / (1000))).slice(0, 5)}s for received packet with length of ${Math.fround(response.length / (1024 * 1024))}mb`, "info")
 }
 
 /*
@@ -310,7 +305,6 @@ const server = net.createServer((socket) => {
                             })
                             timejerk = setTimeout(async () => {
                                 pqueue.add(async () => {
-                                    logger(`Pushing batch to proxy,${connectionID}`, "info")
                                     let msg: Buffer<ArrayBuffer> | null
                                     let newVersion: Buffer
                                     if (mode == "redis" || mode == "http")
@@ -324,20 +318,17 @@ const server = net.createServer((socket) => {
                                         concatious.copy(preMsg, 10, 0)
                                         msg = preMsg
                                     }
-                                    logger("Before bitch 1")
 
                                     const iv = crypto.randomBytes(12)
                                     const cipher = crypto.createCipheriv("aes-256-gcm", symmetricKey, iv)
                                     const encryptedMsg = Buffer.concat([cipher.update(msg), cipher.final()])
                                     const tag = cipher.getAuthTag()
-                                    logger("Before bitch")
                                     if (mode == "http") {
                                         if (!httpAborter)
                                             httpAborter = new AbortController()
                                         rtt = Date.now()
                                         const shit = Buffer.concat([iv, tag, encryptedMsg])
                                         while (!httpAborter.signal.aborted) {
-                                            logger("This loop got reached")
                                             const code = await new Promise<number>((resolve) => {
                                                 const req = http.request({
                                                     hostname: config.hostname,
@@ -362,14 +353,11 @@ const server = net.createServer((socket) => {
                                                 req.write(shit)
                                                 req.end()
                                             })
-                                            logger("After it")
                                         
                                             if (code == 203) {
-                                                logger("203 code")
                                                 await new Promise<void>((resolve) => setTimeout(resolve, 100))
                                                 continue
                                             } else {
-                                                logger("The code " + code)
                                                 break
                                             }
 
@@ -667,9 +655,7 @@ const server = net.createServer((socket) => {
                                         break
                                     }
                                     sent = false
-                                    logger("kair?")
-                                    bandwidthChange(rtt, max, connectionID, response)
-                                    logger("Nakir?")
+                                    bandwidthChange(rtt, max, connectionID, DSTADDR, `${DSTPORT}`, response)
                                     if (mode == "s3")
                                         sclient.putObject(`proxy,ack,${connectionID}/${inSeq}`, Buffer.from(`${max}`))
                                     else if (mode == "redis")
@@ -681,7 +667,6 @@ const server = net.createServer((socket) => {
                                         })).catch((reason) => {
                                             logger(`Problem with pushing batch after informing ${reason}`, "error")
                                         })
-                                    logger("Kos?")
                                     const extractIv = response!.subarray(0, 12)
                                     const tag = response!.subarray(12, 28)
                                     const encryptedChunk = response!.subarray(28)
@@ -695,7 +680,6 @@ const server = net.createServer((socket) => {
                                         const realMsg = decryptedChunk.subarray(10)
                                         decryptedChunk = realMsg
                                     }
-                                    logger("kir?")
                                     if (!Buffer.from('end', 'binary').compare(decryptedChunk)) {
                                         logger(`server chunk for ${connectionID} is null`, "info")
                                         if (pinger)
@@ -723,7 +707,6 @@ const server = net.createServer((socket) => {
                                         socket.end()
                                         break
                                     }
-                                    logger("Writing shitass here?")
                                     socket?.write(decryptedChunk)
                                 } catch (error) {
                                     logger("Error here because of shit of !response " + error)
@@ -833,7 +816,6 @@ const finishCallback = async () => {
                         sagjerk.push({ Key: element.Key! })
                     if (!config.deleteManual) {
                         try {
-                            logger("OK SO HERE???")
                             await justForDelete.send(
                                 new DeleteObjectsCommand({
                                     Bucket: bucketName,
@@ -842,7 +824,6 @@ const finishCallback = async () => {
                                     },
                                 })
                             )
-                            logger("REALLLLY?")
                         } catch (e) {
                             logger("Failed to delete with DeleteObjectsCommand trying with DeleteObject", "info")
                             try {
@@ -853,7 +834,6 @@ const finishCallback = async () => {
                                     }))
                                 }))
                             } catch (e) {
-                                logger("Ok this failed too? why?")
                                 logger(e as any)
                             }
                         }
@@ -866,7 +846,6 @@ const finishCallback = async () => {
                                 }))
                             }))
                         } catch (e) {
-                            logger("Ok this failed too? why?")
                             logger(e as any)
                         }
                     }
