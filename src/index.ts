@@ -11,58 +11,6 @@ import http from 'http'
 
 const mode = config.mode
 
-/*
-Forward secrecy:
-Ok we need it because whenever we encrypt a data our iv is random, so if someone just write
-same object in s3 or redis or somehow have access to our connection and can send the same packet again with same iv
-because of that we get tls alert, this is crucial because its not production readyness 
-my idea is we work with a symmetric key we know then in inform whell, everyone can send inform, because client
-sends connectionID, we only make connection in receiver side when the connectionID dosent exist
-so it dosent have any issue with this part, this is kinda valid for http too
-the tough portion is the rest, well we can make a symmetric key ourself and server make a symmetric key too
-and hmm, symmetric key somehow should be safe and recognized by 2 side, so I SHOULD wait for a response after inform
-which makes it realllllllly slower
-so we need a way requires no waiting, and not being expensive
-well client can say its symmetric key in inform? well with this there's no secrecy
-unless client sends something that makes that symmetric key safe? like what?
-we need a handshake for this which is bad, the core idea is iv should only get used once
-so what i can do is we use this same symmetric key, but with a difference that iv is incremental, yea like saying
-ok server has max - 1 iv and it decrements to down and client has an iv that starts from 0
-but problem is a pussy can inspect packets and find the algorithm that relates max - 1 to 0 in packets,
-which make decryption of aes possible again
-so what i can do is i make connection bidirectional, like ok i use 0,1,2... for pushing batches and receiving them
-and i use some hashes for this kind of feature, for example we have versions for our batches in s3
-ok so i change it, i make file names like 0,1,2,3... in uuid directory (this is kinda same for redis too)
-and and for reading hmm this is hard because with this logic everytime i read the directory gets heavier 
-so it gets slower, what if, we have a first logic in our data channel that reads data but
-we encrypt that with our symmetric key, and that encrypted thing is has a symmetric shit and with that
-we have an algorithm that both server and ..., well having an algorithm makes reading/writing relatble
-unless it dosent, so hmm, we make the key splited by half and make each seed of a random generator
-
-***
-ok in general we have a symmetric key, and in encrypted inform we have random iv, then in first batch we receive
-we save this random iv as some that cant be used again, also in first response we have hmm lets say 32byte
-of symmetric shit and we split it by half and make 2 random shits, client use one incrementor and server uses
-another, (it means we first make a random buffer and increment it 1 by 1 and all previous
-should be unusable)
-***
-
-but what if client makes it random shit for iv? well that makes shitty pitty and stuff, every one can put their
-shit in s3 storage (those employeeeees)
-
-ok all i said sucks, any algorithm you make is shit, because patterns are detectable, i just save
-random ivs for each connection and make previous ones unusable
-
-so server returns two symmetric key in its response and we just fuck with random shits
-no that sucks it just make everything slower
-
-in fact all of this is bullshit yea not for redis-http and http but indeed for redis and object storage
-its all bs, so i just do the indexing part? yea i make redis-http too, http forward secrecy? 
-in fact the only thing they can do in cdn is tls alert for this scenaro
-
-
-*/
-
 const sclient = new S3Light({
     endPoint: config.endpointUrl,
     region: config.zone,
