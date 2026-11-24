@@ -629,7 +629,6 @@ const server = net.createServer((socket) => {
                                         }
                                     }
                                     if (!response?.length) {
-                                        logger("SO THIS SHOULD BE WRITTEN")
                                         logger(`server chunk for ${connectionID} is null`, "info")
                                         if (pinger)
                                             clearInterval(pinger)
