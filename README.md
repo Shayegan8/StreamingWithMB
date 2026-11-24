@@ -88,5 +88,5 @@ MAYBE i add a mechanism that you can use both s3 and redis, like sending your ch
 
 TODO:
 - Add a stacked logic for deletion which just write something in like uuid,DEAD DEAD shows this uuid dosent exist anymore so delete all that relates to it And after that delete the uuidDEAD too (indexing)
-- There's a security flaw i found with help of my friend, well for example lets say i wanna send tls handshake request to google.com using my shit, well i have an iv thats random, so if i send the same request again, it will make tls alert (error), for preventing this i should handshake a symmetric key after every informing, and iv should start from something that is not usable again, iv should being used one time, well if i have separate incrementor for each server and client for their ivs (nonce), my idea is having 2 symmetric key for client and server, and each can use same nonce at same time, because symmetric keys are different 
+- Iv shouldn't be just random, if provider changes chunks in message buses or even cdn fucks with it they can alert connections
 - Well If i run it in production i need managed concurrency, need to control any work with a big pool, for fixed memory usage
